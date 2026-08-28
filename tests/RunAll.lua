@@ -13,6 +13,7 @@ io.write("======================================\n")
 local testFiles = {
 	"tests/TestColors.lua",
 	"tests/TestMatchState.lua",
+	"tests/TestDisplay.lua",
 	"tests/TestSmoke.lua",
 }
 

@@ -11,4 +11,5 @@ Libs\MiniFramework\MiniFramework.xml
 Config.lua
 Colors.lua
 MatchState.lua
+Display.lua
 MiniDampen.lua
