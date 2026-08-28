@@ -1,0 +1,84 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the addon
+        uses: actions/checkout@v6
+
+      # The build scripts live in the shared addon-devops repository, which every addon also
+      # carries as a submodule. Checking it out separately rather than with submodules: true
+      # keeps the SSH url in .gitmodules working for local development - a runner has no key
+      # for it. If addon-devops is private, add a PAT with read access as a repository secret
+      # and pass it here as `token: ${{ secrets.DEVOPS_TOKEN }}`.
+      - name: Check out the shared build scripts
+        uses: actions/checkout@v6
+        with:
+          repository: Verubato/addon-devops
+          path: build
+
+      # --local installs into the runner's own rock tree, which is the tree `luarocks path`
+      # reports; a sudo install can land somewhere that path never mentions.
+      - name: Install Lua and luacheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1 liblua5.1-0-dev luarocks
+          luarocks install --local --lua-version 5.1 luafilesystem
+          luarocks install --local --lua-version 5.1 luacheck
+
+      - name: Lint
+        shell: pwsh
+        run: ./build/Lint.ps1
+
+      # always() so a lint failure doesn't hide the test result, and vice versa. Addons with no
+      # suite report "no suite found" and pass.
+      - name: Test
+        if: always()
+        shell: pwsh
+        run: ./build/Test.ps1
+
+      # The three checks below all report to the run summary as well as failing, because the
+      # summary is where the detail lives - which strings, which client, which commit. Each is
+      # `always()` so one failure doesn't hide the others: seeing every problem in one run
+      # beats finding them one push at a time.
+      - name: Check the build submodule is current
+        if: always()
+        shell: pwsh
+        run: ./build/Checks/CheckSubmodule.ps1
+
+      # A key the code asks for with no translation behind it shows the raw English string to
+      # that player. Orphaned locale entries are reported but don't fail - they're dead weight
+      # from a reworded string, not a defect.
+      - name: Check locales
+        if: always()
+        shell: pwsh
+        run: |
+          $report = python ./build/Checks/CheckLocales.py | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $report
+          if ($env:GITHUB_STEP_SUMMARY) {
+            "## Locales`n`n``````n$report``````" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+          exit $code
+
+      # A TOC missing the live interface number makes the addon load with the out-of-date
+      # warning and show greyed out in the character-select addon list. A test-realm build
+      # doesn't count, and an unreachable wiki page passes rather than blocking the build.
+      - name: Check client builds
+        if: always()
+        shell: pwsh
+        run: |
+          $report = python ./build/Checks/CheckTocVersions.py | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $report
+          if ($env:GITHUB_STEP_SUMMARY) {
+            "## Client builds`n`n``````n$report``````" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+          exit $code
