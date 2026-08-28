@@ -160,19 +160,6 @@ function M.Build()
 	InstallOverrides(env)
 	harness.Login(context)
 
-	-- MiniDampen.lua does not wire the three modules together until its own Step D rewrite, so
-	-- this stands in for it: Config:Init() first, because it is what seeds the saved-variable
-	-- defaults MatchState:Init() and Display:Init() read from.
-	context.Addon.Config:Init()
-	context.Addon.MatchState:Init()
-	context.Addon.Display:Init()
-
-	-- MiniDampen.lua's own Step D wiring, stood in for here the same way the three Init calls
-	-- above are.
-	context.Addon.MatchState.OnChanged = function()
-		context.Addon.Display:Refresh()
-	end
-
 	-- Leaves env.MatchState as whatever the test already set it to, defaulting to Waiting, so a
 	-- test can enter already Engaged without a StartUp edge ever having been observed.
 	function env.Enter()
@@ -231,14 +218,6 @@ function M.Build()
 
 		InstallOverrides(env)
 		harness.Login(context)
-
-		context.Addon.Config:Init()
-		context.Addon.MatchState:Init()
-		context.Addon.Display:Init()
-
-		context.Addon.MatchState.OnChanged = function()
-			context.Addon.Display:Refresh()
-		end
 	end
 
 	---Advances both clocks together and drains every timer and ticker, standing in for one
