@@ -9,4 +9,6 @@
 
 Libs\MiniFramework\MiniFramework.xml
 Config.lua
+Colors.lua
+MatchState.lua
 MiniDampen.lua
