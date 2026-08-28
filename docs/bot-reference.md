@@ -22,16 +22,19 @@ a right value.
 ## How it works
 
 - Runs only in an arena: `IsInInstance` reports `"arena"` and the active match state is
-  neither `Inactive` nor unreadable. Leaving the arena unregisters every event and cancels
-  the poll ticker; nothing about the addon runs in the open world, a battleground, or a
-  raid.
+  neither `Inactive` nor `Complete`. Leaving the arena unregisters every event and cancels
+  the poll ticker. A small bootstrap frame stays permanently registered for
+  `PLAYER_ENTERING_WORLD`, `ZONE_CHANGED_NEW_AREA`, and `PVP_MATCH_STATE_CHANGED`, everywhere
+  including the open world, a battleground, or a raid, purely to re-check whether to open the
+  gate; nothing else about the addon runs outside an arena.
 - Polls twice a second for alive/dead (`UnitIsDeadOrGhost` on `player`, `party1`, `party2`,
   `arena1`, `arena2`, `arena3`) and the dampening aura (spell 110310). An opponent counts as
-  hidden, not dead, after 1.5 seconds without an `ARENA_OPPONENT_UPDATE` "seen" for it; the
-  alive count itself only ever moves on an actual death.
-- Solo shuffle round record: the round number starts at 1 on the first `StartUp` after
-  entering, increments each `PostRound`, and caps at 6. A round's result comes from
-  `C_PvP.GetActiveMatchWinner` where that answers a real faction; otherwise it falls back to
+  hidden, not dead, 1.5 seconds after an `ARENA_OPPONENT_UPDATE` "unseen" for it, unless a
+  "seen" arrives first; the alive count itself only ever moves on an actual death.
+- Solo shuffle round record: the round number starts at 1 the first time a round moves from
+  `StartUp` to `Engaged` after entering, increments on every later `StartUp` -> `Engaged`
+  edge, and caps at 6. A round's result comes from `C_PvP.GetActiveMatchWinner` where that
+  answers a real faction and agrees with the corpse latch; otherwise it falls back to
   whichever side had every member die at some point in the round, which reads as unknown
   when a departing opponent leaves that undecidable. The record survives a `/reload` as long
   as the same match is still running.
@@ -87,9 +90,9 @@ There is no reset-to-defaults button; settings live in MiniDampenDB.
 
 | Symptom | Likely cause |
 | --- | --- |
-| Nothing shows in an arena | Check "Enabled". Unlock the frame briefly to confirm the blocks exist and draw with sample data; if they do, the gate simply has not opened yet (it only evaluates on entering the world or changing zone). |
+| Nothing shows in an arena | Check "Enabled". Unlock the frame briefly to confirm the blocks exist and draw with sample data. |
 | Dampening block is missing entirely | The dampening aura was unreadable this session (absent, secret, or not a number); the block hides rather than showing a blank or a zero. |
-| Enemy alive count seems to skip an opponent | That opponent has been continuously out of sight for 1.5 seconds and is drawn hidden, not dead; hidden never changes the count itself. |
+| Enemy alive count seems to skip an opponent | Either it has been continuously out of sight for 1.5 seconds, drawn hidden without changing the count, or it disconnected or left and Blizzard cleared its visibility override, drawn the same way but this time subtracted from the count and marked with `?` since it can no longer be confirmed alive. A departed ally is handled the same way. |
 | Round record shows a `?` for the win count | At least one settled round could not be determined (usually an opponent left before dying), so the total is unknown rather than wrong. |
 | Cannot move a block | "Locked" is checked. Unlock it first. |
-| Blizzard's own arena widgets are gone | Expected while "Hide Blizzard widgets" is on and you are in scope; they return at alpha 1 on leaving, unless something else had already hidden them, in which case MiniDampen leaves that alone. |
+| Blizzard's own arena widgets are gone | Expected while "Hide Blizzard widgets" is on and you are in scope; they return to whatever alpha MiniDampen found them at on leaving, so they can come back dimmed if another addon had already dimmed them. |

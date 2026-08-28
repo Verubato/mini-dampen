@@ -31,8 +31,8 @@ local state = {
 local M = {}
 addon.MatchState = M
 
--- Read by Display.lua. The table itself is never replaced, only its fields, so this reference
--- stays valid for the addon's whole life.
+-- The table itself is never replaced, only its fields, so this reference stays valid for the
+-- addon's whole life.
 M.State = state
 -- MiniDampen.lua points this at Display:Refresh() once every module is initialised.
 M.OnChanged = nil
@@ -47,7 +47,7 @@ local function ReadDeaths(entries)
 	for _, entry in ipairs(entries) do
 		local dead = UnitIsDeadOrGhost(entry.Token)
 
-		if not issecretvalue(dead) then
+		if not mini:IsSecret(dead) then
 			entry.Alive = dead ~= true
 			entry.EverDead = entry.EverDead or dead == true
 		end
@@ -66,10 +66,22 @@ end
 
 local function ReadDampening()
 	local aura = C_UnitAuras.GetPlayerAuraBySpellID(DAMPENING_SPELL_ID)
+
+	if mini:IsSecret(aura) then
+		state.dampening = nil
+		return
+	end
+
 	local points = aura and aura.points
+
+	if mini:IsSecret(points) then
+		state.dampening = nil
+		return
+	end
+
 	local value = points and points[1]
 
-	if value ~= nil and not issecretvalue(value) and type(value) == "number" then
+	if not mini:IsSecret(value) and type(value) == "number" then
 		state.dampening = math.floor(value + 0.5)
 	else
 		state.dampening = nil
@@ -101,7 +113,7 @@ local function BuildAlly(teamSize)
 		end
 
 		if UnitExists(token) then
-			entries[#entries + 1] = { Token = token, Alive = true, Hidden = false, UnseenSince = nil, EverDead = false }
+			entries[#entries + 1] = { Token = token, Alive = true, Hidden = false, UnseenSince = nil, EverDead = false, Cleared = false }
 		end
 	end
 
@@ -112,7 +124,14 @@ local function BuildEnemy(teamSize)
 	local entries = {}
 
 	for i = 1, teamSize do
-		entries[i] = { Token = ENEMY_TOKENS[i], Alive = true, Hidden = false, UnseenSince = nil, EverDead = false }
+		entries[i] = {
+			Token = ENEMY_TOKENS[i],
+			Alive = true,
+			Hidden = false,
+			UnseenSince = nil,
+			EverDead = false,
+			Cleared = false,
+		}
 	end
 
 	return entries
@@ -120,9 +139,9 @@ end
 
 local function CurrentMatchKey()
 	local _, _, _, _, _, _, _, instanceId = GetInstanceInfo()
-	local bracket = C_PvP.GetActiveMatchBracket and C_PvP.GetActiveMatchBracket()
-	local duration = C_PvP.GetActiveMatchDuration and C_PvP.GetActiveMatchDuration()
-	local startedAt = duration and (time() - duration)
+	local bracket = C_PvP.GetActiveMatchBracket()
+	local duration = C_PvP.GetActiveMatchDuration()
+	local startedAt = time() - duration
 
 	return instanceId, bracket, startedAt
 end
@@ -171,6 +190,8 @@ local function FindEnemyIndex(token)
 	end
 end
 
+---"cleared" means Blizzard dropped its visibility override, on a disconnect, a leave, or
+---routinely between shuffle rounds. The entry stays so teamSize remains the denominator.
 local function OnArenaOpponentUpdate(token, reason)
 	local index = FindEnemyIndex(token)
 
@@ -178,23 +199,24 @@ local function OnArenaOpponentUpdate(token, reason)
 		return
 	end
 
-	if reason == "cleared" then
-		table.remove(state.enemy, index)
-		Notify()
-		return
-	end
-
 	local entry = state.enemy[index]
 
-	if reason == "seen" then
+	if reason == "cleared" then
+		entry.Cleared = true
+		entry.Hidden = false
+		entry.UnseenSince = nil
+	elseif reason == "seen" then
+		entry.Cleared = false
 		entry.UnseenSince = nil
 		entry.Hidden = false
 	elseif reason == "unseen" then
 		entry.UnseenSince = entry.UnseenSince or GetTime()
 	elseif reason == "destroyed" then
+		entry.Cleared = false
 		entry.UnseenSince = nil
 		entry.Hidden = false
 		entry.EverDead = true
+		entry.Alive = false
 	end
 
 	Notify()
@@ -209,19 +231,18 @@ local function ClearEverDeadAndHidden()
 		entry.EverDead = false
 		entry.Hidden = false
 		entry.UnseenSince = nil
+		entry.Cleared = false
 	end
 end
 
----The fallback when the winner API has nothing to say: one side's whole roster has to have
----died at some point in the round, and the other side must have someone who never did.
+---A cleared opponent who never latched dead leaves enemyAllDead false, blocking a win the
+---same way a still-living opponent would.
 local function CorpseLatchResult()
 	if #state.enemy == 0 or #state.ally == 0 then
 		return "unknown"
 	end
 
-	-- An opponent who clears without dying shrinks the roster below teamSize, and that must
-	-- block a win the same way a still-living opponent would.
-	local enemyAllDead = #state.enemy == state.teamSize
+	local enemyAllDead = true
 	local allyAllDead = true
 
 	for _, entry in ipairs(state.enemy) do
@@ -247,19 +268,24 @@ local function CorpseLatchResult()
 	return "unknown"
 end
 
+---GetActiveMatchWinner is Nilable = false, so with no winner decided it still answers some
+---sentinel number rather than nil, which can land on a real faction index.
 local function DetermineResult()
 	local winner = C_PvP.GetActiveMatchWinner()
 	local mine = GetBattlefieldArenaFaction and GetBattlefieldArenaFaction()
+	local corpseResult = CorpseLatchResult()
 
-	if winner == mine then
-		return "win"
+	if mine == nil or (winner ~= 0 and winner ~= 1) then
+		return corpseResult
 	end
 
-	if winner == 0 or winner == 1 then
-		return "loss"
+	local winnerResult = (winner == mine) and "win" or "loss"
+
+	if corpseResult ~= "unknown" and corpseResult ~= winnerResult then
+		return "unknown"
 	end
 
-	return CorpseLatchResult()
+	return winnerResult
 end
 
 local function SettleRound()
@@ -269,8 +295,10 @@ local function SettleRound()
 
 	state.roundResults[state.roundIndex] = DetermineResult()
 
-	db.ActiveMatch.RoundIndex = state.roundIndex
-	db.ActiveMatch.Results = state.roundResults
+	if db.ActiveMatch then
+		db.ActiveMatch.RoundIndex = state.roundIndex
+		db.ActiveMatch.Results = state.roundResults
+	end
 end
 
 local function OnMatchStateChanged()
@@ -278,6 +306,11 @@ local function OnMatchStateChanged()
 
 	if newState == Enum.PvPMatchState.Engaged and lastMatchState == Enum.PvPMatchState.StartUp then
 		state.roundIndex = math.min((state.roundIndex or 0) + 1, MAX_ROUNDS)
+
+		if db.ActiveMatch then
+			db.ActiveMatch.RoundIndex = state.roundIndex
+		end
+
 		ClearEverDeadAndHidden()
 	elseif newState == Enum.PvPMatchState.PostRound and lastMatchState ~= Enum.PvPMatchState.PostRound then
 		SettleRound()
@@ -287,9 +320,14 @@ local function OnMatchStateChanged()
 	Notify()
 end
 
----Fills in a party member who was still loading when the match opened, without disturbing
----anyone already being tracked.
+---Fills in a party member who was still loading when the match opened. A tracked ally whose
+---token stops resolving is marked cleared rather than dropped, the same as a departed
+---opponent, so teamSize remains the ally denominator too.
 local function OnGroupRosterUpdate()
+	for _, entry in ipairs(state.ally) do
+		entry.Cleared = not UnitExists(entry.Token)
+	end
+
 	for _, token in ipairs(ALLY_TOKENS) do
 		if #state.ally >= state.teamSize then
 			break
@@ -305,7 +343,7 @@ local function OnGroupRosterUpdate()
 		end
 
 		if not tracked and UnitExists(token) then
-			state.ally[#state.ally + 1] = { Token = token, Alive = true, Hidden = false, UnseenSince = nil, EverDead = false }
+			state.ally[#state.ally + 1] = { Token = token, Alive = true, Hidden = false, UnseenSince = nil, EverDead = false, Cleared = false }
 		end
 	end
 
@@ -323,9 +361,16 @@ local function OnPrepOpponentSpecializations()
 	Notify()
 end
 
+---UNIT_AURA fires many times a second in arena, so notifying only on an actual change spares
+---Display a full Refresh on every no-op firing.
 local function OnUnitAura()
+	local previous = state.dampening
+
 	ReadDampening()
-	Notify()
+
+	if state.dampening ~= previous then
+		Notify()
+	end
 end
 
 local function OnGatedEvent(_, event, ...)
@@ -392,6 +437,8 @@ local function CloseScope()
 	Notify()
 end
 
+---In scope for as long as a match is running: not Inactive before it starts, not Complete
+---once the results screen is up.
 local function EvaluateGate()
 	local _, instanceType = IsInInstance()
 	local matchState = C_PvP.GetActiveMatchState()
@@ -399,7 +446,7 @@ local function EvaluateGate()
 	local inScope = db.Enabled
 		and instanceType == "arena"
 		and matchState ~= Enum.PvPMatchState.Inactive
-		and matchState ~= nil
+		and matchState ~= Enum.PvPMatchState.Complete
 
 	if inScope then
 		if not state.inScope then
@@ -410,12 +457,19 @@ local function EvaluateGate()
 	end
 end
 
+function M:Evaluate()
+	EvaluateGate()
+end
+
 function M:Init()
 	db = mini:GetSavedVars()
 
 	bootstrap = CreateFrame("Frame")
 	bootstrap:RegisterEvent("PLAYER_ENTERING_WORLD")
 	bootstrap:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+	-- Permanently registered, not only opened by OpenScope, so a match that is still Inactive
+	-- at PLAYER_ENTERING_WORLD still gets a chance to open scope once it starts.
+	bootstrap:RegisterEvent("PVP_MATCH_STATE_CHANGED")
 	bootstrap:SetScript("OnEvent", EvaluateGate)
 
 	gated = CreateFrame("Frame")

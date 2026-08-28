@@ -7,15 +7,16 @@ local FONT_FLAGS = "OUTLINE"
 local BLOCK_WIDTH = 220
 local BLOCK_HEIGHT = 20
 local LABEL_WIDTH = 130
-local PIP_ROW_WIDTH = 90
 local PIP_BACKING_SIZE = 12
 local PIP_CURRENT_BACKING_SIZE = 14
 local PIP_SPACING = 4
 local PIP_TEAM_GAP = 10
 local MAX_ROUNDS = 6
+-- Arena teams cap at 3, so the counts row never needs more than this many pips a side.
+local MAX_TEAM_SIZE = 3
 local LIGHTS = "Lights"
 -- Sample content drawn everywhere, unlocked, so the two blocks can be positioned outside a
--- match. Mirrors the design's own worked example: one hidden opponent, one dead opponent.
+-- match.
 local SAMPLE_STATE = {
 	isSoloShuffle = false,
 	teamSize = 3,
@@ -41,6 +42,7 @@ local countsBlock
 local dampeningBlock
 -- Never restore an alpha this addon did not set itself.
 local didWeHide = false
+local preexistingAlpha
 ---@class Display
 local M = {}
 addon.Display = M
@@ -88,7 +90,7 @@ end
 local function SetPipForEntry(pip, entry)
 	if not entry.Alive then
 		SetPip(pip, PIP_BACKING_SIZE, 10, 2, Colors.LIGHT_DEAD)
-	elseif entry.Hidden then
+	elseif entry.Cleared or entry.Hidden then
 		SetPip(pip, PIP_BACKING_SIZE, 4, 4, Colors.COUNT_HIDDEN)
 	else
 		SetPip(pip, PIP_BACKING_SIZE, 10, 10, Colors.LIGHT_WON)
@@ -114,7 +116,7 @@ local function RenderCountsPips(block, effState)
 	local teamSize = effState.teamSize
 	local pipWidgets = block.PipWidgets
 
-	for i = 1, 6 do
+	for i = 1, MAX_TEAM_SIZE * 2 do
 		if i <= teamSize then
 			local entry = effState.ally[i]
 
@@ -162,21 +164,6 @@ local function RenderRoundPips(block, effState)
 	LayoutPips(block.Pips, pipWidgets, nil)
 end
 
--- Dampening has no discrete states to shape, so the one pip carries the same gradient colour
--- the Numbers value would have used, and the rest of the row stays empty.
-local function RenderDampeningPip(block, effState)
-	local pipWidgets = block.PipWidgets
-	local color = { Colors:ForDampening(effState.dampening) }
-
-	SetPip(pipWidgets[1], PIP_BACKING_SIZE, 10, 10, color)
-
-	for i = 2, 6 do
-		HidePip(pipWidgets[i])
-	end
-
-	LayoutPips(block.Pips, pipWidgets, nil)
-end
-
 local function CountsMode(effState)
 	if effState.isSoloShuffle and effState.roundIndex ~= nil then
 		return "rounds"
@@ -186,34 +173,45 @@ local function CountsMode(effState)
 end
 
 local function CountsValueText(effState)
-	local allyAlive, allyTotal = 0, #effState.ally
+	local allyAlive, allyTotal, allyHidden = 0, #effState.ally, false
 	local enemyAlive, enemyTotal, enemyHidden = 0, #effState.enemy, false
 
 	for _, entry in ipairs(effState.ally) do
-		if entry.Alive then
+		if entry.Alive and not entry.Cleared then
 			allyAlive = allyAlive + 1
+		end
+
+		-- A latched death is a known fact, not an uncertainty. Only mark ? when clearing is
+		-- the only reason this entry's fate is unknown.
+		if entry.Cleared and not entry.EverDead then
+			allyHidden = true
 		end
 	end
 
 	for _, entry in ipairs(effState.enemy) do
-		if entry.Alive then
+		if entry.Alive and not entry.Cleared then
 			enemyAlive = enemyAlive + 1
 		end
 
-		if entry.Hidden then
+		if (entry.Cleared or entry.Hidden) and not entry.EverDead then
 			enemyHidden = true
 		end
 	end
 
 	local allyColor = { Colors:ForCount(allyAlive, allyTotal) }
 	local enemyColor = { Colors:ForCount(enemyAlive, enemyTotal) }
-	local text = ColorText(tostring(allyAlive), allyColor) .. " vs " .. ColorText(tostring(enemyAlive), enemyColor)
+	local allyText = ColorText(tostring(allyAlive), allyColor)
+	local enemyText = ColorText(tostring(enemyAlive), enemyColor)
 
-	if enemyHidden then
-		text = text .. ColorText("?", Colors.COUNT_HIDDEN)
+	if allyHidden then
+		allyText = allyText .. ColorText("?", Colors.COUNT_HIDDEN)
 	end
 
-	return text
+	if enemyHidden then
+		enemyText = enemyText .. ColorText("?", Colors.COUNT_HIDDEN)
+	end
+
+	return allyText .. " vs " .. enemyText
 end
 
 local function RoundsValueText(effState)
@@ -257,14 +255,11 @@ local function RenderCountsBlock(effState, lights)
 	end
 end
 
-local function RenderDampeningBlock(effState, lights)
+-- Lights applies to the counts and round-record row only: MiniDampen's whole point is the
+-- dampening percentage, and a single gradient pip is not legible on its own.
+local function RenderDampeningBlock(effState)
 	dampeningBlock.Legend:SetText("Dampening")
-
-	if lights then
-		RenderDampeningPip(dampeningBlock, effState)
-	else
-		dampeningBlock.Value:SetText(DampeningValueText(effState))
-	end
+	dampeningBlock.Value:SetText(DampeningValueText(effState))
 end
 
 local function ApplyFonts()
@@ -283,16 +278,21 @@ local function ApplyWidgetDimming(inScope)
 		return
 	end
 
-	if inScope and db.HideBlizzardWidgets then
+	local shouldHide = inScope and db.HideBlizzardWidgets
+
+	if shouldHide and not didWeHide then
+		preexistingAlpha = container:GetAlpha()
 		container:SetAlpha(0)
 		didWeHide = true
-	elseif not inScope and didWeHide then
-		container:SetAlpha(1)
+	elseif not shouldHide and didWeHide then
+		container:SetAlpha(preexistingAlpha)
 		didWeHide = false
 	end
 end
 
-local function BuildBlock(frameName, anchorDb, defaultAnchor)
+---The dampening block never draws Lights, a single gradient pip is not legible alone, so it
+---passes withPips = false and gets no pip widgets.
+local function BuildBlock(frameName, anchorDb, defaultAnchor, withPips)
 	local frame = CreateFrame("Frame", frameName, UIParent)
 	frame:SetSize(BLOCK_WIDTH, BLOCK_HEIGHT)
 
@@ -304,14 +304,18 @@ local function BuildBlock(frameName, anchorDb, defaultAnchor)
 	value:SetJustifyH("LEFT")
 	value:SetPoint("LEFT", frame, "LEFT", LABEL_WIDTH, 0)
 
-	local pips = CreateFrame("Frame", nil, frame)
-	pips:SetSize(PIP_ROW_WIDTH, PIP_BACKING_SIZE)
-	pips:SetPoint("LEFT", frame, "LEFT", LABEL_WIDTH, 0)
+	local pips, pipWidgets
 
-	local pipWidgets = {}
+	if withPips then
+		pips = CreateFrame("Frame", nil, frame)
+		pips:SetHeight(PIP_BACKING_SIZE)
+		pips:SetPoint("LEFT", frame, "LEFT", LABEL_WIDTH, 0)
 
-	for i = 1, MAX_ROUNDS do
-		pipWidgets[i] = CreatePip(pips)
+		pipWidgets = {}
+
+		for i = 1, MAX_ROUNDS do
+			pipWidgets[i] = CreatePip(pips)
+		end
 	end
 
 	mini:MakeMovable(frame, anchorDb, { IsLocked = function() return db.Locked end })
@@ -325,8 +329,6 @@ function M:SetStyle(style)
 
 	countsBlock.Value:SetShown(not lights)
 	countsBlock.Pips:SetShown(lights)
-	dampeningBlock.Value:SetShown(not lights)
-	dampeningBlock.Pips:SetShown(lights)
 end
 
 function M:Refresh()
@@ -352,7 +354,7 @@ function M:Refresh()
 	end
 
 	if showDampening then
-		RenderDampeningBlock(effState, lights)
+		RenderDampeningBlock(effState)
 	end
 end
 
@@ -360,8 +362,8 @@ function M:Init()
 	db = mini:GetSavedVars()
 	state = addon.MatchState.State
 
-	countsBlock = BuildBlock(addonName .. "CountsFrame", db.CountsAnchor, DEFAULT_COUNTS_ANCHOR)
-	dampeningBlock = BuildBlock(addonName .. "DampeningFrame", db.DampeningAnchor, DEFAULT_DAMPENING_ANCHOR)
+	countsBlock = BuildBlock(addonName .. "CountsFrame", db.CountsAnchor, DEFAULT_COUNTS_ANCHOR, true)
+	dampeningBlock = BuildBlock(addonName .. "DampeningFrame", db.DampeningAnchor, DEFAULT_DAMPENING_ANCHOR, false)
 
 	M.CountsBlock = countsBlock
 	M.DampeningBlock = dampeningBlock

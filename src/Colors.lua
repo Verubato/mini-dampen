@@ -79,19 +79,9 @@ function M:ForDampening(percent)
 		local from = DAMPENING_STOPS[i]
 		local to = DAMPENING_STOPS[i + 1]
 
-		if percent == from[1] then
-			return from[2], from[3], from[4]
-		end
-
-		if percent == to[1] then
-			return to[2], to[3], to[4]
-		end
-
-		if percent > from[1] and percent < to[1] then
+		if percent >= from[1] and percent < to[1] then
 			local t = (percent - from[1]) / (to[1] - from[1])
 			return Lerp(from[2], to[2], t), Lerp(from[3], to[3], t), Lerp(from[4], to[4], t)
 		end
 	end
-
-	return last[2], last[3], last[4]
 end

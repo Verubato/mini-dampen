@@ -65,6 +65,41 @@ fw.describe("MiniDampen - scope gate", function()
 		fw.falsy(env.Addon.MatchState.State.inScope, "scope did not open")
 		fw.eq(#env.Tickers, 0, "no ticker created")
 	end)
+
+	fw.it("opens once the match leaves Inactive, with no fresh PLAYER_ENTERING_WORLD", function()
+		-- Entering while still Inactive leaves the gate shut; only the bootstrap frame's own
+		-- PVP_MATCH_STATE_CHANGED registration gives it another chance to open.
+		env.MatchState = 0 -- Inactive
+		env.Enter()
+
+		fw.falsy(env.Addon.MatchState.State.inScope, "still shut while Inactive")
+
+		env.SetState(1) -- Waiting
+
+		fw.truthy(env.Addon.MatchState.State.inScope, "opened once the match left Inactive")
+	end)
+
+	fw.it("closes scope once the match reaches Complete, not only Inactive", function()
+		env.Enter()
+		env.SetState(2) -- StartUp
+		env.SetState(3) -- Engaged
+		env.SetWinner(0)
+		env.SetState(4) -- PostRound
+		env.SetState(5) -- Complete
+
+		fw.falsy(env.Addon.MatchState.State.inScope, "closed once the results screen is up")
+	end)
+
+	fw.it("closes immediately when Evaluate runs after Enabled turns false", function()
+		env.Enter()
+
+		fw.truthy(env.Addon.MatchState.State.inScope, "scope open")
+
+		_G.MiniDampenDB.Enabled = false
+		env.Addon.MatchState:Evaluate()
+
+		fw.falsy(env.Addon.MatchState.State.inScope, "closed the moment Evaluate re-checks Enabled")
+	end)
 end)
 
 fw.describe("MiniDampen - visibility", function()
@@ -123,16 +158,34 @@ fw.describe("MiniDampen - visibility", function()
 		fw.eq(aliveCount, 2, "enemy alive count dropped to 2")
 	end)
 
-	fw.it("leaves the count unchanged and does not error when a death read is secret", function()
+	fw.it("does not error when a death read is secret", function()
 		env.MarkDeathSecret("arena2")
 
 		fw.no_error(function()
 			env.Tick(0.5)
 		end, "secret death read")
+	end)
 
-		local entry = env.Addon.MatchState.State.enemy[2]
+	fw.it("does not resurrect a corpse when its next death read comes back secret", function()
+		env.Kill("arena3")
+		env.Tick(0.5)
 
-		fw.eq(entry.Alive, true, "unresolved read leaves alive untouched")
+		fw.eq(env.Addon.MatchState.State.enemy[3].Alive, false, "dead before the secret read")
+
+		env.MarkDeathSecret("arena3")
+		env.Tick(0.5)
+
+		fw.eq(env.Addon.MatchState.State.enemy[3].Alive, false, "still dead, an unresolved read must not overwrite it")
+	end)
+
+	fw.it("marks a destroyed opponent dead immediately, even while its own death read stays secret", function()
+		env.MarkDeathSecret("arena3")
+		env.Destroyed("arena3")
+
+		local entry = env.Addon.MatchState.State.enemy[3]
+
+		fw.eq(entry.Alive, false, "destroyed sets Alive directly, not only through the poll")
+		fw.truthy(entry.EverDead, "also latches EverDead")
 	end)
 end)
 
@@ -203,6 +256,27 @@ fw.describe("MiniDampen - round settling", function()
 		fw.eq(env.Addon.MatchState.State.roundResults[1], "unknown", "arena3 never latched dead")
 	end)
 
+	fw.it("settles unknown when the winner API disagrees with a conclusive corpse latch", function()
+		startRound()
+		env.SetWinner(1) -- claims the enemy won
+		env.Kill("arena1")
+		env.Kill("arena2")
+		env.Kill("arena3")
+		env.Tick(0.5) -- every enemy latched dead: the corpse latch says the player's side won
+		env.SetState(4)
+
+		fw.eq(env.Addon.MatchState.State.roundResults[1], "unknown", "winner and corpse latch conclusively disagree")
+	end)
+
+	fw.it("never settles a win from a bare nil == nil when both winner and mine are unknown", function()
+		env.MyFaction = nil
+		startRound()
+		env.SetWinner(nil)
+		env.SetState(4)
+
+		fw.neq(env.Addon.MatchState.State.roundResults[1], "win", "mine is nil, winner can't be trusted either way")
+	end)
+
 	fw.it("clears everDead on the next StartUp", function()
 		startRound()
 		env.Kill("arena1")
@@ -225,6 +299,20 @@ fw.describe("MiniDampen - round settling", function()
 		fresh.Enter()
 
 		fw.is_nil(fresh.Addon.MatchState.State.roundIndex, "nothing to adopt, no StartUp edge seen")
+	end)
+
+	fw.it("does not error when a round edge follows PVP_MATCH_COMPLETE before scope closes", function()
+		startRound()
+		env.SetWinner(0)
+		env.SetState(4) -- PostRound, round one settles
+
+		env.Context.Mock.FireEvent("PVP_MATCH_COMPLETE")
+
+		fw.no_error(function()
+			startRound() -- StartUp -> Engaged again, before EvaluateGate has closed scope
+			env.SetWinner(0)
+			env.SetState(4) -- PostRound, settling with db.ActiveMatch already nil
+		end, "round activity after PVP_MATCH_COMPLETE, before the scope closes")
 	end)
 end)
 
@@ -271,6 +359,40 @@ fw.describe("MiniDampen - the reload key", function()
 		env.Reload()
 
 		fw.eq(env.Addon.MatchState.State.roundIndex, 1, "adopted despite the two second drift")
+	end)
+
+	fw.it("round index survives a reload mid-round-3, before that round settles", function()
+		env.Enter()
+		env.SetState(2) -- StartUp, round one
+		env.SetState(3) -- Engaged
+		env.SetWinner(0)
+		env.SetState(4) -- PostRound, round one settles
+		env.SetState(2) -- StartUp, round two
+		env.SetState(3) -- Engaged
+		env.SetWinner(0)
+		env.SetState(4) -- PostRound, round two settles
+		env.SetState(2) -- StartUp, round three
+		env.SetState(3) -- Engaged, round three is current and has not settled
+
+		env.Reload()
+
+		fw.eq(env.Addon.MatchState.State.roundIndex, 3, "round index is written on increment, not only at settle")
+		fw.eq(env.Addon.MatchState.State.roundResults[1], "win", "round one survived")
+		fw.eq(env.Addon.MatchState.State.roundResults[2], "win", "round two survived")
+		fw.is_nil(env.Addon.MatchState.State.roundResults[3], "round three has not settled yet")
+	end)
+
+	fw.it("discards the saved record when the instance id differs beyond tolerance", function()
+		env.Enter()
+		env.SetState(2)
+		env.SetState(3)
+		env.SetWinner(0)
+		env.SetState(4)
+
+		env.InstanceId = env.InstanceId + 1
+		env.Reload()
+
+		fw.is_nil(env.Addon.MatchState.State.roundIndex, "a different instance id is a different match")
 	end)
 
 	fw.it("discards the saved record when the bracket differs beyond tolerance", function()
@@ -345,11 +467,50 @@ fw.describe("MiniDampen - dampening", function()
 		fw.is_nil(env.Addon.MatchState.State.dampening, "a secret point value gives nil")
 	end)
 
+	fw.it("does not error and stays nil when the whole aura is secret", function()
+		env.SetAuraSecret(true)
+
+		fw.no_error(function()
+			env.Tick(0.5)
+		end, "secret aura read")
+
+		fw.is_nil(env.Addon.MatchState.State.dampening, "a secret aura gives nil")
+	end)
+
+	fw.it("does not error and stays nil when the points field itself is secret", function()
+		env.SetPointsSecret(true)
+
+		fw.no_error(function()
+			env.Tick(0.5)
+		end, "secret points read")
+
+		fw.is_nil(env.Addon.MatchState.State.dampening, "secret points gives nil")
+	end)
+
 	fw.it("is nil when the point value is not a number", function()
 		env.SetDampening("30")
 		env.Tick(0.5)
 
 		fw.is_nil(env.Addon.MatchState.State.dampening, "a non-number point value gives nil")
+	end)
+
+	fw.it("notifies on UNIT_AURA only when the dampening percent actually changes", function()
+		env.SetDampening(30)
+		env.Tick(0.5) -- establishes dampening = 30 through the poll, ahead of the assertions below
+
+		local calls = 0
+		env.Addon.MatchState.OnChanged = function()
+			calls = calls + 1
+		end
+
+		env.Context.Mock.FireEvent("UNIT_AURA", "player")
+
+		fw.eq(calls, 0, "no notify when the aura fires but the percent is unchanged")
+
+		env.SetDampening(31)
+		env.Context.Mock.FireEvent("UNIT_AURA", "player")
+
+		fw.eq(calls, 1, "notifies once the percent actually moves")
 	end)
 end)
 
@@ -361,11 +522,48 @@ fw.describe("MiniDampen - the enemy denominator", function()
 		env.Enter()
 	end)
 
-	fw.it("shrinks when an opponent clears", function()
+	fw.it("keeps a cleared opponent's entry, so teamSize stays the denominator", function()
 		fw.eq(#env.Addon.MatchState.State.enemy, 3, "starts at three")
 
 		env.Cleared("arena3")
 
-		fw.eq(#env.Addon.MatchState.State.enemy, 2, "arena3's entry is gone")
+		fw.eq(#env.Addon.MatchState.State.enemy, 3, "arena3's entry stays in place")
+		fw.truthy(env.Addon.MatchState.State.enemy[3].Cleared, "flagged cleared")
+	end)
+
+	fw.it("reverses cleared when the same token is seen again", function()
+		env.Cleared("arena3")
+		env.Seen("arena3")
+
+		fw.falsy(env.Addon.MatchState.State.enemy[3].Cleared, "seen reverses the clear")
+	end)
+end)
+
+fw.describe("MiniDampen - the ally roster", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+		env.Enter()
+	end)
+
+	fw.it("keeps an ally's entry when its token stops resolving, so teamSize stays the denominator", function()
+		fw.eq(#env.Addon.MatchState.State.ally, 3, "starts with three allies")
+
+		env.Exists.party2 = false
+		env.Context.Mock.FireEvent("GROUP_ROSTER_UPDATE")
+
+		fw.eq(#env.Addon.MatchState.State.ally, 3, "party2's entry stays in place")
+		fw.truthy(env.Addon.MatchState.State.ally[3].Cleared, "flagged cleared")
+	end)
+
+	fw.it("reverses cleared when the same ally is seen again in the roster", function()
+		env.Exists.party2 = false
+		env.Context.Mock.FireEvent("GROUP_ROSTER_UPDATE")
+
+		env.Exists.party2 = true
+		env.Context.Mock.FireEvent("GROUP_ROSTER_UPDATE")
+
+		fw.falsy(env.Addon.MatchState.State.ally[3].Cleared, "roster update reverses the clear")
 	end)
 end)

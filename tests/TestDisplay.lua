@@ -24,6 +24,13 @@ fw.describe("MiniDampen - style swap", function()
 		fw.falsy(env.Addon.Display.CountsBlock.Pips:IsShown(), "pips hidden in Numbers")
 	end)
 
+	fw.it("Lights leaves the dampening block on Numbers, a single pip is not legible alone", function()
+		env.Addon.Display:SetStyle("Lights")
+
+		fw.truthy(env.Addon.Display.DampeningBlock.Value:IsShown(), "dampening value still shown in Lights")
+		fw.is_nil(env.Addon.Display.DampeningBlock.Pips, "dampening block has no pip widgets to show")
+	end)
+
 	fw.it("a second Refresh creates no new frames", function()
 		env.Addon.Display:Refresh()
 
@@ -63,6 +70,129 @@ fw.describe("MiniDampen - counts pips", function()
 		fw.eq(hiddenFill:GetHeight(), 4, "hidden fill height, a dot")
 		fw.eq(aliveFill:GetWidth(), 10, "alive fill width")
 		fw.eq(aliveFill:GetHeight(), 10, "alive fill height, a solid block")
+	end)
+
+	fw.it("draws a cleared opponent as a dot, the same shape as hidden", function()
+		env.Cleared("arena3")
+		env.Tick(2)
+
+		local pips = env.Addon.Display.CountsBlock.PipWidgets
+		local clearedFill = pips[6].Fill
+
+		fw.eq(clearedFill:GetWidth(), 4, "cleared fill width, a dot")
+		fw.eq(clearedFill:GetHeight(), 4, "cleared fill height, a dot")
+	end)
+end)
+
+local function StripColor(text)
+	return (text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+end
+
+local function ColorCode(color)
+	return string.format("%02x%02x%02x", color[1] * 255, color[2] * 255, color[3] * 255)
+end
+
+fw.describe("MiniDampen - counts value text", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+		env.Enter()
+		_G.MiniDampenDB.DisplayStyle = "Numbers"
+	end)
+
+	fw.it("renders the counts row as \"N vs N\"", function()
+		env.Addon.Display:Refresh()
+
+		local text = env.Addon.Display.CountsBlock.Value:GetText()
+
+		fw.eq(StripColor(text), "3 vs 3", "full strength on both sides")
+	end)
+
+	fw.it("renders a single ? no matter how many opponents are hidden", function()
+		env.Unseen("arena1")
+		env.Unseen("arena2")
+		env.Tick(2)
+		env.Addon.Display:Refresh()
+
+		local text = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
+		local _, markerCount = text:gsub("?", "")
+
+		fw.eq(markerCount, 1, "one ? marker even with two opponents hidden")
+	end)
+
+	fw.it("does not count a cleared opponent among the living, and marks it with ?", function()
+		env.Cleared("arena3")
+		env.Addon.Display:Refresh()
+
+		local text = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
+
+		fw.eq(text, "3 vs 2?", "cleared opponent excluded from the alive tally, marked ?")
+	end)
+
+	fw.it("does not count a departed ally among the living, and marks it with ?", function()
+		env.Exists.party2 = false
+		env.Context.Mock.FireEvent("GROUP_ROSTER_UPDATE")
+		env.Addon.Display:Refresh()
+
+		local text = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
+
+		fw.eq(text, "2? vs 3", "departed ally excluded from the alive tally, marked ?")
+	end)
+
+	fw.it("does not mark a dead-then-cleared opponent with ?, its fate is already known", function()
+		env.Kill("arena3")
+		env.Tick(0.5)
+		env.Cleared("arena3")
+		env.Addon.Display:Refresh()
+
+		local text = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
+
+		fw.eq(text, "3 vs 2", "a latched death needs no ?, unlike clearing before ever dying")
+	end)
+end)
+
+fw.describe("MiniDampen - round record value text", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+		env.SoloShuffle = true
+		env.Enter()
+		_G.MiniDampenDB.DisplayStyle = "Numbers"
+	end)
+
+	local function round(winner)
+		env.SetState(2) -- StartUp
+		env.SetState(3) -- Engaged
+		env.SetWinner(winner)
+		env.SetState(4) -- PostRound
+	end
+
+	fw.it("renders \"(2)-4/6\" with the win count in the won colour", function()
+		round(0) -- win
+		round(0) -- win
+		round(1) -- loss
+		round(1) -- loss
+		env.Addon.Display:Refresh()
+
+		local text = env.Addon.Display.CountsBlock.Value:GetText()
+
+		fw.eq(StripColor(text), "(2)-4/6", "two wins of four rounds played, six total")
+		fw.truthy(text:find(ColorCode(env.Addon.Colors.LIGHT_WON), 1, true), "win count wrapped in the won colour")
+	end)
+
+	fw.it("shows ? for the win count when a round settled unknown", function()
+		env.SetWinner(nil)
+		env.SetState(2)
+		env.SetState(3)
+		env.Cleared("arena1") -- never latches dead, so the corpse latch can't decide either
+		env.SetState(4)
+		env.Addon.Display:Refresh()
+
+		local text = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
+
+		fw.truthy(text:find("?", 1, true), "win count reads ? rather than a wrong number")
 	end)
 end)
 
@@ -171,14 +301,24 @@ fw.describe("MiniDampen - Blizzard widget dimming", function()
 		fw.eq(_G.UIWidgetTopCenterContainerFrame:GetAlpha(), 1, "restored on leaving")
 	end)
 
-	fw.it("never raises an alpha it did not set", function()
-		_G.UIWidgetTopCenterContainerFrame:SetAlpha(0)
-		_G.MiniDampenDB.HideBlizzardWidgets = false
+	fw.it("restores the alpha another addon had already set, not a hardcoded 1", function()
+		_G.UIWidgetTopCenterContainerFrame:SetAlpha(0.4)
 
 		env.Enter()
 		env.Leave()
 
-		fw.eq(_G.UIWidgetTopCenterContainerFrame:GetAlpha(), 0, "left exactly as found")
+		fw.eq(_G.UIWidgetTopCenterContainerFrame:GetAlpha(), 0.4, "restored to what was found, not 1")
+	end)
+
+	fw.it("restores immediately when the setting is switched off mid-arena", function()
+		env.Enter()
+
+		fw.eq(_G.UIWidgetTopCenterContainerFrame:GetAlpha(), 0, "dimmed on entering")
+
+		_G.MiniDampenDB.HideBlizzardWidgets = false
+		env.Addon.Display:Refresh()
+
+		fw.eq(_G.UIWidgetTopCenterContainerFrame:GetAlpha(), 1, "restored immediately, still in the arena")
 	end)
 end)
 

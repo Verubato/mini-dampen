@@ -15,6 +15,7 @@ local function OnAddonLoad()
 end
 
 function addon:Refresh()
+	addon.MatchState:Evaluate()
 	addon.Display:Refresh()
 end
 

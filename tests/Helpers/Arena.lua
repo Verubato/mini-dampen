@@ -6,9 +6,15 @@ local harness = require("AddonHarness")
 
 local M = {}
 
--- Identity marker for a value the addon must treat as secret. issecretvalue below recognises
--- it by identity, the same way the real predicate recognises a value's own secrecy tag.
-M.SECRET = {}
+-- Identity marker for a value the addon must treat as secret. Indexing it raises, so code
+-- that indexes this before checking issecretvalue fails the test instead of quietly reading
+-- through it. No __eq or __lt: Lua 5.1 only invokes __eq when both operands share the same
+-- handler, so a comparison against a plain value never reaches one anyway.
+M.SECRET = setmetatable({}, {
+	__index = function()
+		error("indexed a secret value before checking issecretvalue", 2)
+	end,
+})
 
 ---(Re)installs every override this addon's WoW API surface needs onto the mocked globals.
 ---Called once after the initial load and again after every simulated Reload, because
@@ -16,7 +22,7 @@ M.SECRET = {}
 local function InstallOverrides(env)
 	-- Real values rather than the mock's auto-vivifying members in first-access order, so a
 	-- comparison against Enum.PvPMatchState.PostRound and friends resolves the same way here
-	-- as it does in game. Verified against PvpInfoDocumentation.lua in the 12.1.0 UI source.
+	-- as it does in game.
 	_G.Enum.PvPMatchState = {
 		Inactive = 0,
 		Waiting = 1,
@@ -68,11 +74,20 @@ local function InstallOverrides(env)
 		return env.Deaths[unit] == true
 	end
 
+	-- rawequal, so this never depends on whether some other test value carries its own __eq.
 	_G.issecretvalue = function(value)
-		return value == M.SECRET
+		return rawequal(value, M.SECRET)
 	end
 
 	_G.C_UnitAuras.GetPlayerAuraBySpellID = function()
+		if env.AuraSecret then
+			return M.SECRET
+		end
+
+		if env.PointsSecret then
+			return { points = M.SECRET }
+		end
+
 		if env.Dampening == nil then
 			return nil
 		end
@@ -151,6 +166,8 @@ function M.Build()
 		Bracket = 1,
 		InstanceId = 1,
 		Dampening = nil,
+		AuraSecret = false,
+		PointsSecret = false,
 		Deaths = {},
 		SecretDeaths = {},
 		Exists = { player = true, party1 = true, party2 = true, arena1 = true, arena2 = true, arena3 = true },
@@ -199,12 +216,27 @@ function M.Build()
 		context.Mock.FireEvent("ARENA_OPPONENT_UPDATE", token, "cleared")
 	end
 
+	function env.Destroyed(token)
+		context.Mock.FireEvent("ARENA_OPPONENT_UPDATE", token, "destroyed")
+	end
+
 	function env.SetWinner(faction)
 		env.Winner = faction
 	end
 
 	function env.SetDampening(value)
 		env.Dampening = value
+	end
+
+	---Makes the next GetPlayerAuraBySpellID call return the aura table itself as secret.
+	function env.SetAuraSecret(value)
+		env.AuraSecret = value
+	end
+
+	---Makes the next GetPlayerAuraBySpellID call return an aura whose points field is secret,
+	---distinct from a secret points[1].
+	function env.SetPointsSecret(value)
+		env.PointsSecret = value
 	end
 
 	---Simulates a /reload: fresh Lua state, saved variables preserved, everything else the
