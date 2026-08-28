@@ -7,4 +7,6 @@
 ## SavedVariables: MiniDampenDB
 ## IconTexture: Interface\AddOns\MiniDampen\Icon.blp
 
+Libs\MiniFramework\MiniFramework.xml
+Config.lua
 MiniDampen.lua
