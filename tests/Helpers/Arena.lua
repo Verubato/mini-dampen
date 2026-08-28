@@ -51,11 +51,11 @@ local function InstallOverrides(env)
 	end
 
 	_G.GetNumArenaOpponentSpecs = function()
-		return env.TeamSize
+		return env.Specs
 	end
 
 	_G.GetNumArenaOpponents = function()
-		return env.TeamSize
+		return env.Opponents
 	end
 
 	_G.GetBattlefieldArenaFaction = function()
@@ -159,7 +159,10 @@ function M.Build()
 		MatchStartEpoch = 1700000000,
 		InArena = false,
 		MatchState = 1, -- Waiting, so a bare Enter() opens scope without implying StartUp
-		TeamSize = 3,
+		-- Independently controllable, the way the two real APIs can disagree: specs is an early
+		-- estimate that can be wrong, opponents counts real tokens once they exist.
+		Specs = 3,
+		Opponents = 3,
 		SoloShuffle = false,
 		MyFaction = 0,
 		Winner = nil,

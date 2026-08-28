@@ -15,7 +15,7 @@ a right value.
 | Author | Verz |
 | Interface version (TOC) | 120100 (retail only) |
 | Saved variables | MiniDampenDB |
-| Slash commands | /minidampen, /mdampen (both open the settings panel) |
+| Slash commands | /minidampen, /mdampen (see Slash commands below) |
 | Options location | Game options -> AddOns -> MiniDampen |
 | Bundled libraries | MiniFramework |
 
@@ -48,6 +48,19 @@ a right value.
   Unlock to show both blocks everywhere with sample data for positioning them outside a
   match.
 - The "Locked" option prevents dragging (and mouse interaction) on both blocks.
+
+### Slash commands
+
+- `/minidampen`, `/mdampen`: opens the settings panel.
+- `/minidampen lock`, `/minidampen unlock`: the same toggle as the "Locked" checkbox.
+- `/minidampen dampening <percent>`: forces the dampening block to a bracket-marked value
+  from 0 to 999, out of range clamped rather than rejected, until cleared. Ignored the
+  moment a real match is in scope, so a forgotten preview can never be mistaken for what a
+  live match is actually reading.
+- `/minidampen dampening clear`: clears a forced value.
+- `/minidampen debug`: prints every value the two blocks are built from to chat, in or out
+  of combat and in or out of an arena. See the Troubleshooting table below for when this is
+  the right tool.
 
 ### Display styles
 
@@ -96,3 +109,4 @@ There is no reset-to-defaults button; settings live in MiniDampenDB.
 | Round record shows a `?` for the win count | At least one settled round could not be determined (usually an opponent left before dying), so the total is unknown rather than wrong. |
 | Cannot move a block | "Locked" is checked. Unlock it first. |
 | Blizzard's own arena widgets are gone | Expected while "Hide Blizzard widgets" is on and you are in scope; they return to whatever alpha MiniDampen found them at on leaving, so they can come back dimmed if another addon had already dimmed them. |
+| Need to see the raw values behind any of the above | `/minidampen debug` prints them all to chat, including mid-fight where `/dump` itself is refused. See Slash commands above. |

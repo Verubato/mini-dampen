@@ -1,12 +1,13 @@
 local addonName, addon = ...
 ---@type MiniFramework
 local mini = addon.Framework
+local GUI = mini.GUI
 local Colors = addon.Colors
 local FONT_PATH = "Fonts\\FRIZQT__.TTF"
 local FONT_FLAGS = "OUTLINE"
-local BLOCK_WIDTH = 220
 local BLOCK_HEIGHT = 20
-local LABEL_WIDTH = 130
+-- Fixed gap after a legend, so nothing that follows it is ever crowded by a long label.
+local VALUE_GAP = 8
 local PIP_BACKING_SIZE = 12
 local PIP_CURRENT_BACKING_SIZE = 14
 local PIP_SPACING = 4
@@ -15,8 +16,19 @@ local MAX_ROUNDS = 6
 -- Arena teams cap at 3, so the counts row never needs more than this many pips a side.
 local MAX_TEAM_SIZE = 3
 local LIGHTS = "Lights"
--- Sample content drawn everywhere, unlocked, so the two blocks can be positioned outside a
--- match.
+local COUNTS_LEGEND = "Us vs Opponent"
+local ROUNDS_LEGEND = "Rounds"
+local DAMPENING_LEGEND = "Dampening"
+-- Widest text each row can produce, measured but never drawn, so the block width never jitters
+-- as the live value's character count changes tick to tick.
+local WIDEST_COUNTS_VALUE = "3? vs 3?"
+local WIDEST_ROUNDS_VALUE = "(6)-6/6"
+-- Reserves room for a three digit percent plus a forced value's brackets, both expected readings.
+local WIDEST_DAMPENING_VALUE = "[300%]"
+local COUNTS_PIPS_WIDTH = (MAX_TEAM_SIZE * 2 * PIP_BACKING_SIZE) + ((MAX_TEAM_SIZE * 2 - 1) * PIP_SPACING) + PIP_TEAM_GAP
+local ROUND_PIPS_WIDTH = (MAX_ROUNDS * PIP_CURRENT_BACKING_SIZE) + ((MAX_ROUNDS - 1) * PIP_SPACING)
+-- Sample content drawn everywhere while unlocked, including a continuously sweeping dampening
+-- value, so both blocks can be positioned and every colour tier previewed without a real match.
 local SAMPLE_STATE = {
 	isSoloShuffle = false,
 	teamSize = 3,
@@ -34,6 +46,21 @@ local SAMPLE_STATE = {
 	roundIndex = nil,
 	roundResults = {},
 }
+-- A full up-and-down cycle of the unlocked dampening sweep, ranging past the 100 stop so the
+-- clamped top tier is visible too, not just the four named stops below it.
+local SWEEP_PERIOD = 20
+local SWEEP_MIN = 0
+local SWEEP_MAX = 130
+local UNLOCKED_REFRESH_INTERVAL = 0.2
+-- Distinct from every dampening tier colour, so the border never reads as part of the reading
+-- it is warning about.
+local PREVIEW_BORDER = { r = 0.81, g = 0.66, b = 0.31 }
+local PREVIEW_FILL = { r = 0.12, g = 0.11, b = 0.10 }
+local PREVIEW_FILL_ALPHA = 0.55
+-- Extra room the backdrop gets on both sides of the snug legend+content fit, so the border
+-- never hugs the text edge to edge.
+local PREVIEW_PADDING = 14
+local PREVIEW_BACKDROP_HEIGHT = BLOCK_HEIGHT + 6
 local DEFAULT_COUNTS_ANCHOR = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -140 }
 local DEFAULT_DAMPENING_ANCHOR = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -164 }
 local db
@@ -43,6 +70,12 @@ local dampeningBlock
 -- Never restore an alpha this addon did not set itself.
 local didWeHide = false
 local preexistingAlpha
+-- Runs only while unlocked, so the sweep animates and the preview stays live even outside an
+-- arena, where nothing else calls Refresh on its own.
+local unlockedTicker
+-- Never written to saved variables, so a forced value can't survive a reload or be mistaken
+-- for a real setting.
+local forcedDampening
 ---@class Display
 local M = {}
 addon.Display = M
@@ -233,40 +266,94 @@ local function RoundsValueText(effState)
 	return "(" .. ColorText(winsText, Colors.LIGHT_WON) .. ")-" .. (effState.roundIndex or 0) .. "/" .. MAX_ROUNDS
 end
 
-local function DampeningValueText(effState)
-	local color = { Colors:ForDampening(effState.dampening) }
+---A forced value never wins once a real match is in scope, so a preview left running from
+---outside an arena can never be mistaken for what a live match is actually reading.
+local function DampeningValueText(value)
+	local forced = forcedDampening ~= nil and not state.inScope
+	local shown = forced and forcedDampening or value
+	local color = { Colors:ForDampening(shown) }
+	local text = ColorText(shown .. "%", color)
 
-	return ColorText(effState.dampening .. "%", color)
+	if forced then
+		-- Brackets sit outside the coloured span deliberately, in the default text colour, so
+		-- a forced reading can never be mistaken for the plain percent a live one draws.
+		return "[" .. text .. "]"
+	end
+
+	return text
+end
+
+---Triangle wave over SWEEP_MIN..SWEEP_MAX, rising for the first half of SWEEP_PERIOD and
+---falling for the second, so a colour tier is crossed going up and again coming back down.
+local function SweepDampening()
+	local half = SWEEP_PERIOD / 2
+	local phase = GetTime() % SWEEP_PERIOD
+	local progress = phase <= half and (phase / half) or (2 - phase / half)
+
+	return math.floor(SWEEP_MIN + (SWEEP_MAX - SWEEP_MIN) * progress + 0.5)
+end
+
+local function MeasureWidth(block, text)
+	block.Measure:SetText(text)
+
+	return block.Measure:GetStringWidth()
+end
+
+---Sizes both blocks to one shared column pair, a legend width covering both labels and a
+---value width covering both blocks' widest content, so the two rows line up as one table
+---instead of each block centring on its own independent width.
+local function ApplySharedWidth(legendWidth, countsContentWidth, dampeningContentWidth, unlocked)
+	local contentWidth = math.max(countsContentWidth, dampeningContentWidth)
+	local halfPadding = unlocked and (PREVIEW_PADDING / 2) or 0
+	local width = legendWidth + VALUE_GAP + contentWidth + (halfPadding * 2)
+
+	countsBlock.Legend:SetWidth(legendWidth)
+	countsBlock.Legend:ClearAllPoints()
+	countsBlock.Legend:SetPoint("LEFT", countsBlock.Frame, "LEFT", halfPadding, 0)
+	countsBlock.Frame:SetWidth(width)
+
+	dampeningBlock.Legend:SetWidth(legendWidth)
+	dampeningBlock.Legend:ClearAllPoints()
+	dampeningBlock.Legend:SetPoint("LEFT", dampeningBlock.Frame, "LEFT", halfPadding, 0)
+	dampeningBlock.Frame:SetWidth(width)
 end
 
 local function RenderCountsBlock(effState, lights)
 	local mode = CountsMode(effState)
 
-	countsBlock.Legend:SetText(mode == "rounds" and "Rounds" or "Us vs Opponent")
+	countsBlock.Legend:SetText(mode == "rounds" and ROUNDS_LEGEND or COUNTS_LEGEND)
 
 	if lights then
 		if mode == "rounds" then
 			RenderRoundPips(countsBlock, effState)
-		else
-			RenderCountsPips(countsBlock, effState)
+			return ROUND_PIPS_WIDTH
 		end
-	else
-		countsBlock.Value:SetText(mode == "rounds" and RoundsValueText(effState) or CountsValueText(effState))
+
+		RenderCountsPips(countsBlock, effState)
+		return COUNTS_PIPS_WIDTH
 	end
+
+	countsBlock.Value:SetText(mode == "rounds" and RoundsValueText(effState) or CountsValueText(effState))
+
+	return MeasureWidth(countsBlock, mode == "rounds" and WIDEST_ROUNDS_VALUE or WIDEST_COUNTS_VALUE)
 end
 
 -- Lights applies to the counts and round-record row only: MiniDampen's whole point is the
 -- dampening percentage, and a single gradient pip is not legible on its own.
-local function RenderDampeningBlock(effState)
-	dampeningBlock.Legend:SetText("Dampening")
-	dampeningBlock.Value:SetText(DampeningValueText(effState))
+local function RenderDampeningBlock(value)
+	dampeningBlock.Legend:SetText(DAMPENING_LEGEND)
+	dampeningBlock.Value:SetText(DampeningValueText(value))
+
+	return MeasureWidth(dampeningBlock, WIDEST_DAMPENING_VALUE)
 end
 
 local function ApplyFonts()
 	countsBlock.Legend:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
 	countsBlock.Value:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
+	countsBlock.Measure:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
 	dampeningBlock.Legend:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
 	dampeningBlock.Value:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
+	dampeningBlock.Measure:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
 end
 
 ---SetAlpha rather than Hide, because UIWidgetTopCenterContainerFrame's own visibility gate
@@ -290,11 +377,16 @@ local function ApplyWidgetDimming(inScope)
 	end
 end
 
+local function SetPreviewShown(block, shown)
+	block.PreviewFrame:SetShown(shown)
+	block.PreviewLabel:SetShown(shown)
+end
+
 ---The dampening block never draws Lights, a single gradient pip is not legible alone, so it
 ---passes withPips = false and gets no pip widgets.
 local function BuildBlock(frameName, anchorDb, defaultAnchor, withPips)
 	local frame = CreateFrame("Frame", frameName, UIParent)
-	frame:SetSize(BLOCK_WIDTH, BLOCK_HEIGHT)
+	frame:SetHeight(BLOCK_HEIGHT)
 
 	local legend = frame:CreateFontString(nil, "OVERLAY")
 	legend:SetJustifyH("LEFT")
@@ -302,14 +394,19 @@ local function BuildBlock(frameName, anchorDb, defaultAnchor, withPips)
 
 	local value = frame:CreateFontString(nil, "OVERLAY")
 	value:SetJustifyH("LEFT")
-	value:SetPoint("LEFT", frame, "LEFT", LABEL_WIDTH, 0)
+	value:SetPoint("LEFT", legend, "RIGHT", VALUE_GAP, 0)
+
+	-- Never shown: exists only so GetStringWidth() can be asked about a placeholder without
+	-- disturbing whatever text the legend or value is actually displaying.
+	local measure = frame:CreateFontString(nil, "OVERLAY")
+	measure:Hide()
 
 	local pips, pipWidgets
 
 	if withPips then
 		pips = CreateFrame("Frame", nil, frame)
 		pips:SetHeight(PIP_BACKING_SIZE)
-		pips:SetPoint("LEFT", frame, "LEFT", LABEL_WIDTH, 0)
+		pips:SetPoint("LEFT", legend, "RIGHT", VALUE_GAP, 0)
 
 		pipWidgets = {}
 
@@ -318,10 +415,55 @@ local function BuildBlock(frameName, anchorDb, defaultAnchor, withPips)
 		end
 	end
 
+	-- A dedicated child, so the whole backdrop toggles with one SetShown instead of touching
+	-- GUI.RoundedField's ThreeSlice pieces, which Namespace.lua marks as not public API.
+	local previewFrame = CreateFrame("Frame", nil, frame)
+	previewFrame:SetAllPoints(frame)
+	-- BACKGROUND strata keeps it behind the block's own text regardless of frame level.
+	previewFrame:SetFrameStrata("BACKGROUND")
+
+	-- Bordered and tinted, shown only while unlocked, so sample content can never be mistaken
+	-- for a live reading.
+	local previewBackdrop = GUI.RoundedField(previewFrame, PREVIEW_BACKDROP_HEIGHT, "BACKGROUND")
+	previewBackdrop.Fill:SetColor(PREVIEW_FILL.r, PREVIEW_FILL.g, PREVIEW_FILL.b, PREVIEW_FILL_ALPHA)
+	previewBackdrop.Border:SetColor(PREVIEW_BORDER.r, PREVIEW_BORDER.g, PREVIEW_BORDER.b, 1)
+
+	local previewLabel = frame:CreateFontString(nil, "OVERLAY")
+	previewLabel:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 2)
+	previewLabel:SetFont(FONT_PATH, 10, FONT_FLAGS)
+	previewLabel:SetText("PREVIEW")
+	previewLabel:SetTextColor(PREVIEW_BORDER.r, PREVIEW_BORDER.g, PREVIEW_BORDER.b, 1)
+
 	mini:MakeMovable(frame, anchorDb, { IsLocked = function() return db.Locked end })
 	mini:ApplyPosition(frame, anchorDb, defaultAnchor)
 
-	return { Frame = frame, Legend = legend, Value = value, Pips = pips, PipWidgets = pipWidgets }
+	local block = {
+		Frame = frame,
+		Legend = legend,
+		Value = value,
+		Measure = measure,
+		Pips = pips,
+		PipWidgets = pipWidgets,
+		PreviewFrame = previewFrame,
+		PreviewLabel = previewLabel,
+	}
+
+	-- Otherwise both blocks draw a PREVIEW caption at width 0 for the moment between Init and
+	-- the first Refresh.
+	SetPreviewShown(block, false)
+
+	return block
+end
+
+local function ApplyUnlockedTicker(unlocked)
+	if unlocked and not unlockedTicker then
+		unlockedTicker = C_Timer.NewTicker(UNLOCKED_REFRESH_INTERVAL, function()
+			M:Refresh()
+		end)
+	elseif not unlocked and unlockedTicker then
+		unlockedTicker:Cancel()
+		unlockedTicker = nil
+	end
 end
 
 function M:SetStyle(style)
@@ -331,17 +473,39 @@ function M:SetStyle(style)
 	countsBlock.Pips:SetShown(lights)
 end
 
+---Forces the dampening block to a specific percent, bracket-marked so it never reads as a
+---live value, until cleared. Yields to a real arena the moment one is in scope, so a forgotten
+---preview can never be mistaken for what a live match is actually reading.
+---@param value number? nil clears the override
+function M:SetForcedDampening(value)
+	forcedDampening = value
+	self:Refresh()
+end
+
+---Read by MatchState:Debug(), so a forced value that would otherwise silently outlive its
+---preview still shows up in the one diagnostic meant to catch that.
+function M:GetForcedDampening()
+	return forcedDampening
+end
+
 function M:Refresh()
 	ApplyWidgetDimming(state.inScope)
 	self:SetStyle(db.DisplayStyle)
 	ApplyFonts()
 
 	local unlocked = not db.Locked
+
+	ApplyUnlockedTicker(unlocked)
+
 	local effState = unlocked and SAMPLE_STATE or state
+	local dampeningValue = unlocked and SweepDampening() or effState.dampening
 	local visible = unlocked or state.inScope
 	local lights = db.DisplayStyle == LIGHTS
 	local showCounts = visible and db.ShowCounts
-	local showDampening = visible and db.ShowDampening and effState.dampening ~= nil
+	-- A forced value only wins while no real arena is in scope, since it is an explicit
+	-- diagnostic the user just asked for, not a reading that should outlive a real match starting.
+	local forcedActive = forcedDampening ~= nil and not state.inScope
+	local showDampening = db.ShowDampening and (forcedActive or (visible and dampeningValue ~= nil))
 
 	countsBlock.Frame:SetShown(showCounts)
 	dampeningBlock.Frame:SetShown(showDampening)
@@ -349,13 +513,23 @@ function M:Refresh()
 	mini:SetPositionLocked(countsBlock.Frame, db.Locked)
 	mini:SetPositionLocked(dampeningBlock.Frame, db.Locked)
 
+	SetPreviewShown(countsBlock, unlocked)
+	SetPreviewShown(dampeningBlock, unlocked)
+
+	-- Measured ahead of the content below, so the two placeholder reads land here rather than
+	-- clobbering whatever content width Render*Block just measured into the same scratch string.
+	local legendWidth = math.max(MeasureWidth(countsBlock, COUNTS_LEGEND), MeasureWidth(dampeningBlock, DAMPENING_LEGEND))
+	local countsContentWidth, dampeningContentWidth = 0, 0
+
 	if showCounts then
-		RenderCountsBlock(effState, lights)
+		countsContentWidth = RenderCountsBlock(effState, lights)
 	end
 
 	if showDampening then
-		RenderDampeningBlock(effState)
+		dampeningContentWidth = RenderDampeningBlock(dampeningValue)
 	end
+
+	ApplySharedWidth(legendWidth, countsContentWidth, dampeningContentWidth, unlocked)
 end
 
 function M:Init()

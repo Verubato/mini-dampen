@@ -539,6 +539,93 @@ fw.describe("MiniDampen - the enemy denominator", function()
 	end)
 end)
 
+fw.describe("MiniDampen - team size derivation", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+	end)
+
+	fw.it("falls back to specs before any opponent token exists", function()
+		-- The prep room: tokens haven't spawned yet, so opponents reads 0 and specs is the only
+		-- early estimate available.
+		env.Specs = 3
+		env.Opponents = 0
+		env.Enter()
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 3, "specs used as the early estimate")
+	end)
+
+	fw.it("clamps to three even if an API answers more", function()
+		env.Specs = 0
+		env.Opponents = 5
+		env.Enter()
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 3, "clamped to the arena1..3 ceiling")
+	end)
+
+	fw.it("grows as opponent tokens are individually seen after the gates open", function()
+		-- A bot arena: no queued bracket to broadcast a spec count, so the roster only grows as
+		-- real tokens are confirmed one at a time.
+		env.Specs = 0
+		env.Opponents = 0
+		env.Enter()
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 0, "nothing seen yet in the prep room")
+
+		env.Opponents = 1
+		env.Seen("arena1")
+		fw.eq(env.Addon.MatchState.State.teamSize, 1, "grows to one as the first token is seen")
+
+		env.Opponents = 2
+		env.Seen("arena2")
+		fw.eq(env.Addon.MatchState.State.teamSize, 2, "grows to two as the second token is seen")
+
+		env.Opponents = 3
+		env.Seen("arena3")
+		fw.eq(env.Addon.MatchState.State.teamSize, 3, "grows to three as the third token is seen")
+		fw.eq(#env.Addon.MatchState.State.enemy, 3, "enemy roster grew to match")
+	end)
+
+	fw.it("never shrinks the roster once a higher team size has been confirmed", function()
+		env.Specs = 3
+		env.Opponents = 3
+		env.Enter()
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 3, "starts at three, all opponents already visible")
+
+		-- A transient undercount, the kind GROUP_ROSTER_UPDATE can report mid-fight without any
+		-- opponent actually having left.
+		env.Opponents = 2
+		env.Context.Mock.FireEvent("GROUP_ROSTER_UPDATE")
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 3, "the high-water mark holds, the roster doesn't shrink")
+		fw.eq(#env.Addon.MatchState.State.enemy, 3, "enemy roster still sized to three")
+	end)
+
+	fw.it("re-derives after a mid-match reload, so a token not yet visible again isn't lost", function()
+		env.Specs = 3
+		env.Opponents = 3
+		env.Enter()
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 3, "all three opponents visible before the reload")
+
+		-- Simulates a real /reload: fresh Lua state, but the client hasn't reported arena3's
+		-- token back to the API yet.
+		env.Opponents = 2
+		env.Reload()
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 2, "only two opponents visible immediately after the reload")
+
+		env.Opponents = 3
+		env.Seen("arena3")
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 3, "climbs back to three as the missing token is seen")
+		fw.eq(#env.Addon.MatchState.State.enemy, 3, "enemy roster grew back to three")
+		fw.eq(env.Addon.MatchState.State.enemy[3].Token, "arena3", "the third slot is the token that was just seen")
+	end)
+end)
+
 fw.describe("MiniDampen - the ally roster", function()
 	local env
 
@@ -565,5 +652,70 @@ fw.describe("MiniDampen - the ally roster", function()
 		env.Context.Mock.FireEvent("GROUP_ROSTER_UPDATE")
 
 		fw.falsy(env.Addon.MatchState.State.ally[3].Cleared, "roster update reverses the clear")
+	end)
+end)
+
+fw.describe("MiniDampen - Debug()", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+	end)
+
+	local function FindLine(lines, needle)
+		for _, line in ipairs(lines) do
+			if line:find(needle, 1, true) then
+				return line
+			end
+		end
+	end
+
+	fw.it("names the API values a team size was derived from", function()
+		env.Specs = 3
+		env.Opponents = 2
+		env.Enter()
+
+		local line = FindLine(env.Addon.MatchState:Debug(), "teamSize=")
+
+		fw.truthy(line:find("GetNumArenaOpponents=2", 1, true) ~= nil, "raw opponents value present")
+		fw.truthy(line:find("GetNumArenaOpponentSpecs=3", 1, true) ~= nil, "raw specs value present")
+	end)
+
+	fw.it("lists every tracked token with its alive, hidden, cleared, and everDead state", function()
+		env.Enter()
+		env.Kill("arena1")
+		env.Unseen("arena2")
+		env.Tick(2)
+
+		local lines = env.Addon.MatchState:Debug()
+
+		local dead = FindLine(lines, "enemy arena1")
+		local hidden = FindLine(lines, "enemy arena2")
+
+		fw.truthy(dead:find("alive=false", 1, true) ~= nil, "arena1 reported dead")
+		fw.truthy(dead:find("everDead=true", 1, true) ~= nil, "arena1's death latched")
+		fw.truthy(hidden:find("hidden=true", 1, true) ~= nil, "arena2 reported hidden after the expiry delay")
+	end)
+
+	fw.it("reports a secret aura without reading through it", function()
+		env.Enter()
+		env.SetAuraSecret(true)
+
+		local line = FindLine(env.Addon.MatchState:Debug(), "dampening ")
+
+		fw.truthy(line:find("auraSecret=true", 1, true) ~= nil, "flags the aura itself as secret")
+		fw.truthy(line:find("rawValue=nil", 1, true) ~= nil, "never indexed into the secret aura for a raw value")
+	end)
+
+	fw.it("tells a live reading from the unlocked sample preview", function()
+		env.Enter()
+		env.SetDampening(25)
+		env.Tick(0.5)
+
+		fw.truthy(FindLine(env.Addon.MatchState:Debug(), "onScreenValues=live") ~= nil, "live while locked and in scope")
+
+		_G.MiniDampenDB.Locked = false
+
+		fw.truthy(FindLine(env.Addon.MatchState:Debug(), "onScreenValues=sample") ~= nil, "sample once unlocked")
 	end)
 end)

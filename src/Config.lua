@@ -33,6 +33,8 @@ function M:Init()
 
 	local verticalSpacing = mini.VerticalSpacing
 	local horizontalSpacing = mini.HorizontalSpacing
+	local columns = 2
+	local columnStep = mini:ColumnWidth(columns, horizontalSpacing, 0)
 
 	local header = mini:PanelHeader({
 		Parent = panel,
@@ -69,7 +71,7 @@ function M:Init()
 	})
 
 	lockedChk:SetPoint("TOP", enabledChk, "TOP", 0, 0)
-	lockedChk:SetPoint("LEFT", panel, "LEFT", 200, 0)
+	lockedChk:SetPoint("LEFT", panel, "LEFT", columnStep, 0)
 
 	local showCountsChk = mini:Checkbox({
 		Parent = panel,
@@ -84,7 +86,7 @@ function M:Init()
 		end,
 	})
 
-	showCountsChk:SetPoint("TOPLEFT", enabledChk, "BOTTOMLEFT", 0, -verticalSpacing * 2)
+	showCountsChk:SetPoint("TOPLEFT", enabledChk, "BOTTOMLEFT", 0, -verticalSpacing)
 
 	local showDampeningChk = mini:Checkbox({
 		Parent = panel,
@@ -100,7 +102,7 @@ function M:Init()
 	})
 
 	showDampeningChk:SetPoint("TOP", showCountsChk, "TOP", 0, 0)
-	showDampeningChk:SetPoint("LEFT", panel, "LEFT", 200, 0)
+	showDampeningChk:SetPoint("LEFT", panel, "LEFT", columnStep, 0)
 
 	local hideWidgetsChk = mini:Checkbox({
 		Parent = panel,
@@ -115,7 +117,7 @@ function M:Init()
 		end,
 	})
 
-	hideWidgetsChk:SetPoint("TOPLEFT", showCountsChk, "BOTTOMLEFT", 0, -verticalSpacing * 2)
+	hideWidgetsChk:SetPoint("TOPLEFT", showCountsChk, "BOTTOMLEFT", 0, -verticalSpacing)
 
 	local styleDivider = mini:Divider({
 		Parent = panel,
@@ -126,9 +128,11 @@ function M:Init()
 	styleDivider:SetPoint("LEFT", panel, "LEFT")
 	styleDivider:SetPoint("RIGHT", panel, "RIGHT", -horizontalSpacing, 0)
 
+	-- Spans both checkbox columns since Width includes the inline label, and "Display style"
+	-- alone is wider than a single column, truncating to "Nu..." otherwise.
 	local styleDdl = mini:Dropdown({
 		Parent = panel,
-		Width = 160,
+		Width = columnStep * columns - horizontalSpacing,
 		LabelText = "Display style",
 		Tooltip = "Numbers shows counts and percentages. Lights replaces them with shape-coded pips.",
 		Items = { "Numbers", "Lights" },
@@ -159,7 +163,10 @@ function M:Init()
 		end,
 	})
 
-	fontSizeSlider.Slider:SetPoint("TOPLEFT", styleDdl, "BOTTOMLEFT", 0, -verticalSpacing * 3)
+	-- Anchored to the dropdown's label, not the control, since LabelText offsets the control to
+	-- the label's right and anchoring to the control would drift "Font size" off Display
+	-- style's left edge.
+	fontSizeSlider.Slider:SetPoint("TOPLEFT", styleDdl.Label, "BOTTOMLEFT", 0, -verticalSpacing * 3)
 
 	panel:HookScript("OnShow", function()
 		styleDdl:MiniRefresh()
@@ -182,6 +189,47 @@ function M:Init()
 		elseif msg == "unlock" then
 			db.Locked = false
 			addon:Refresh()
+			return
+		elseif msg == "debug" then
+			-- Never gated on combat, since reading these values mid-fight, where /dump itself
+			-- is refused, is the entire point of this command.
+			for _, line in ipairs(addon.MatchState:Debug()) do
+				mini:NotifyWithPrefix(line)
+			end
+			return
+		end
+
+		if msg == "dampening" then
+			mini:NotifyWithPrefix("/minidampen dampening <percent> or /minidampen dampening clear")
+			return
+		end
+
+		local dampeningArg = msg:match("^dampening%s+(.+)$")
+
+		if dampeningArg then
+			if dampeningArg == "clear" then
+				addon.Display:SetForcedDampening(nil)
+				return
+			end
+
+			local value = mini:ClampInt(dampeningArg, 0, 999, nil)
+
+			if not value then
+				mini:NotifyWithPrefix("/minidampen dampening <percent> or /minidampen dampening clear")
+				return
+			end
+
+			addon.Display:SetForcedDampening(value)
+			return
+		end
+
+		if msg ~= "" then
+			mini:NotifyWithPrefix("Commands:")
+			mini:NotifyWithPrefix("/minidampen lock")
+			mini:NotifyWithPrefix("/minidampen unlock")
+			mini:NotifyWithPrefix("/minidampen debug")
+			mini:NotifyWithPrefix("/minidampen dampening <percent>")
+			mini:NotifyWithPrefix("/minidampen dampening clear")
 			return
 		end
 

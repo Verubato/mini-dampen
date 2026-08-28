@@ -12,11 +12,17 @@ local HIDDEN_DELAY = 1.5
 -- the two computed start times only need to land within this many seconds of each other.
 local MATCH_KEY_TOLERANCE = 3
 local MAX_ROUNDS = 6
+-- The client only ever hands out arena1..3, so this also bounds however many opponents an
+-- API claims to see.
+local MAX_TEAM_SIZE = 3
 local db
 local bootstrap
 local gated
 local ticker
 local lastMatchState
+-- Ratchets up only from a live GetNumArenaOpponents() reading, never down, so a transient
+-- undercount after a reload can't shrink a roster already proven real.
+local teamSizeSeen = 0
 local state = {
 	inScope = false,
 	isSoloShuffle = false,
@@ -96,12 +102,17 @@ local function Poll()
 	Notify()
 end
 
----Blizzard's own spec count lags the roster count during prep, so the higher of the two wins.
+---Opponents only answers once tokens exist, so specs is the prep-room fallback before any do.
 local function ArenaTeamSize()
-	local specs = GetNumArenaOpponentSpecs and GetNumArenaOpponentSpecs() or 0
 	local opponents = GetNumArenaOpponents and GetNumArenaOpponents() or 0
 
-	return math.min(math.max(specs, opponents), 3)
+	if opponents > 0 then
+		return math.min(opponents, MAX_TEAM_SIZE)
+	end
+
+	local specs = GetNumArenaOpponentSpecs and GetNumArenaOpponentSpecs() or 0
+
+	return math.min(specs, MAX_TEAM_SIZE)
 end
 
 local function BuildAlly(teamSize)
@@ -120,11 +131,11 @@ local function BuildAlly(teamSize)
 	return entries
 end
 
-local function BuildEnemy(teamSize)
-	local entries = {}
-
-	for i = 1, teamSize do
-		entries[i] = {
+---Grows state.enemy in place rather than replacing it, so an entry a token update already
+---touched this scope keeps its Alive/Hidden/EverDead history instead of resetting on regrow.
+local function ResizeEnemy(size)
+	for i = #state.enemy + 1, size do
+		state.enemy[i] = {
 			Token = ENEMY_TOKENS[i],
 			Alive = true,
 			Hidden = false,
@@ -134,7 +145,20 @@ local function BuildEnemy(teamSize)
 		}
 	end
 
-	return entries
+	for i = #state.enemy, size + 1, -1 do
+		state.enemy[i] = nil
+	end
+end
+
+---Re-derived on every roster event, not just OpenScope, so a token not yet seen when the scope
+---opened, a mid-match reload or a late spawn, is not lost for the rest of the match.
+local function RefreshTeamSize()
+	teamSizeSeen = math.max(teamSizeSeen, ArenaTeamSize())
+
+	if teamSizeSeen ~= state.teamSize then
+		state.teamSize = teamSizeSeen
+		ResizeEnemy(teamSizeSeen)
+	end
 end
 
 local function CurrentMatchKey()
@@ -193,6 +217,8 @@ end
 ---"cleared" means Blizzard dropped its visibility override, on a disconnect, a leave, or
 ---routinely between shuffle rounds. The entry stays so teamSize remains the denominator.
 local function OnArenaOpponentUpdate(token, reason)
+	RefreshTeamSize()
+
 	local index = FindEnemyIndex(token)
 
 	if not index then
@@ -304,6 +330,8 @@ end
 local function OnMatchStateChanged()
 	local newState = C_PvP.GetActiveMatchState()
 
+	RefreshTeamSize()
+
 	if newState == Enum.PvPMatchState.Engaged and lastMatchState == Enum.PvPMatchState.StartUp then
 		state.roundIndex = math.min((state.roundIndex or 0) + 1, MAX_ROUNDS)
 
@@ -324,6 +352,8 @@ end
 ---token stops resolving is marked cleared rather than dropped, the same as a departed
 ---opponent, so teamSize remains the ally denominator too.
 local function OnGroupRosterUpdate()
+	RefreshTeamSize()
+
 	for _, entry in ipairs(state.ally) do
 		entry.Cleared = not UnitExists(entry.Token)
 	end
@@ -351,13 +381,7 @@ local function OnGroupRosterUpdate()
 end
 
 local function OnPrepOpponentSpecializations()
-	local teamSize = ArenaTeamSize()
-
-	if teamSize > 0 and teamSize ~= state.teamSize then
-		state.teamSize = teamSize
-		state.enemy = BuildEnemy(teamSize)
-	end
-
+	RefreshTeamSize()
 	Notify()
 end
 
@@ -395,9 +419,11 @@ end
 local function OpenScope()
 	state.inScope = true
 	state.isSoloShuffle = (C_PvP.IsSoloShuffle and C_PvP.IsSoloShuffle()) or false
-	state.teamSize = ArenaTeamSize()
+	teamSizeSeen = 0
+	state.teamSize = 0
+	state.enemy = {}
+	RefreshTeamSize()
 	state.ally = BuildAlly(state.teamSize)
-	state.enemy = BuildEnemy(state.teamSize)
 	state.dampening = nil
 	lastMatchState = C_PvP.GetActiveMatchState()
 
@@ -424,6 +450,7 @@ local function CloseScope()
 	state.dampening = nil
 	state.roundIndex = nil
 	state.roundResults = {}
+	teamSizeSeen = 0
 
 	gated:UnregisterAllEvents()
 
@@ -459,6 +486,96 @@ end
 
 function M:Evaluate()
 	EvaluateGate()
+end
+
+---Reads everything /minidampen debug needs to tell a real reading from a preview, or a gate
+---defect from an empty arena, without a round trip.
+function M:Debug()
+	local lines = {}
+	local _, instanceType = IsInInstance()
+	local matchState = C_PvP.GetActiveMatchState()
+	local specs = GetNumArenaOpponentSpecs and GetNumArenaOpponentSpecs()
+	local opponents = GetNumArenaOpponents and GetNumArenaOpponents()
+
+	lines[#lines + 1] = string.format(
+		"inScope=%s locked=%s instanceType=%s matchState=%s",
+		tostring(state.inScope),
+		tostring(db.Locked),
+		tostring(instanceType),
+		tostring(matchState)
+	)
+
+	local source
+
+	if not db.Locked then
+		source = "sample (unlocked preview)"
+	elseif state.inScope then
+		source = "live"
+	else
+		source = "none, out of scope and locked"
+	end
+
+	lines[#lines + 1] = string.format("onScreenValues=%s", source)
+
+	lines[#lines + 1] = string.format(
+		"teamSize=%d allyCount=%d enemyCount=%d GetNumArenaOpponents=%s GetNumArenaOpponentSpecs=%s",
+		state.teamSize,
+		#state.ally,
+		#state.enemy,
+		tostring(opponents),
+		tostring(specs)
+	)
+
+	-- Mirrors ReadDampening's own guard order, so a secret aura or points table is never
+	-- indexed further here either.
+	local aura = C_UnitAuras.GetPlayerAuraBySpellID(DAMPENING_SPELL_ID)
+	local auraSecret = mini:IsSecret(aura)
+	local points, pointsSecret, rawValue, rawSecret
+
+	if not auraSecret then
+		points = aura and aura.points
+		pointsSecret = mini:IsSecret(points)
+
+		if not pointsSecret then
+			rawValue = points and points[1]
+			rawSecret = mini:IsSecret(rawValue)
+		end
+	end
+
+	lines[#lines + 1] = string.format(
+		"dampening displayed=%s auraSecret=%s pointsSecret=%s rawValue=%s rawSecret=%s",
+		tostring(state.dampening),
+		tostring(auraSecret),
+		tostring(pointsSecret),
+		rawSecret and "secret" or tostring(rawValue),
+		tostring(rawSecret)
+	)
+
+	lines[#lines + 1] = string.format("forcedDampening=%s", tostring(addon.Display:GetForcedDampening()))
+
+	for _, entry in ipairs(state.ally) do
+		lines[#lines + 1] = string.format(
+			"ally %s alive=%s hidden=%s cleared=%s everDead=%s",
+			entry.Token,
+			tostring(entry.Alive),
+			tostring(entry.Hidden),
+			tostring(entry.Cleared),
+			tostring(entry.EverDead)
+		)
+	end
+
+	for _, entry in ipairs(state.enemy) do
+		lines[#lines + 1] = string.format(
+			"enemy %s alive=%s hidden=%s cleared=%s everDead=%s",
+			entry.Token,
+			tostring(entry.Alive),
+			tostring(entry.Hidden),
+			tostring(entry.Cleared),
+			tostring(entry.EverDead)
+		)
+	end
+
+	return lines
 end
 
 function M:Init()

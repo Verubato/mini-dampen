@@ -283,6 +283,196 @@ fw.describe("MiniDampen - anchors", function()
 	end)
 end)
 
+fw.describe("MiniDampen - counts row layout", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+		env.Enter()
+	end)
+
+	fw.it("anchors the value off the legend's own right edge, not a fixed offset", function()
+		local point, relativeTo, relativePoint = env.Addon.Display.CountsBlock.Value:GetPoint(1)
+
+		fw.eq(point, "LEFT", "value's own anchor point")
+		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Legend, "anchored to the legend, not the frame, so no fixed offset can undershoot a wide label")
+		fw.eq(relativePoint, "RIGHT", "off the legend's right edge")
+	end)
+
+	fw.it("anchors the pips row the same way as the value, off the legend's right edge", function()
+		local _, relativeTo = env.Addon.Display.CountsBlock.Pips:GetPoint(1)
+
+		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Legend, "pips anchored to the legend too")
+	end)
+
+	fw.it("keeps a fixed gap regardless of font size, not a fixed label column", function()
+		local leftover = {}
+
+		for _, fontSize in ipairs({ 10, 24 }) do
+			_G.MiniDampenDB.FontSize = fontSize
+			env.Addon.Display:Refresh()
+
+			local block = env.Addon.Display.CountsBlock
+			leftover[fontSize] = block.Frame:GetWidth() - block.Legend:GetStringWidth() - block.Measure:GetStringWidth()
+		end
+
+		fw.eq(leftover[10], leftover[24], "the only non-text room in the block is a fixed gap that doesn't move with the font, at either slider extreme")
+	end)
+
+	fw.it("gives both blocks the same width, so their legends and values share one column", function()
+		env.Addon.Display:Refresh()
+
+		fw.eq(
+			env.Addon.Display.CountsBlock.Frame:GetWidth(),
+			env.Addon.Display.DampeningBlock.Frame:GetWidth(),
+			"both blocks share one width, not each sized to its own content"
+		)
+	end)
+end)
+
+fw.describe("MiniDampen - preview affordance", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+	end)
+
+	fw.it("shows the preview backdrop and label only while unlocked", function()
+		_G.MiniDampenDB.Locked = true
+		env.Addon.Display:Refresh()
+
+		fw.falsy(env.Addon.Display.CountsBlock.PreviewLabel:IsShown(), "hidden while locked")
+
+		_G.MiniDampenDB.Locked = false
+		env.Addon.Display:Refresh()
+
+		fw.truthy(env.Addon.Display.CountsBlock.PreviewLabel:IsShown(), "shown while unlocked")
+	end)
+
+	fw.it("stays draggable while unlocked with no arena entered", function()
+		_G.MiniDampenDB.Locked = false
+		env.Addon.Display:Refresh()
+
+		fw.truthy(env.Addon.Display.CountsBlock.Frame:IsShown(), "sample content visible outside an arena")
+		fw.eq(env.Addon.Display.CountsBlock.Frame:IsMovable(), true, "still draggable with no match running")
+	end)
+end)
+
+fw.describe("MiniDampen - dampening tier preview", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+	end)
+
+	fw.it("sweeps the sample dampening value while unlocked, without a real match", function()
+		_G.MiniDampenDB.Locked = false
+		env.Addon.Display:Refresh()
+
+		local first = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
+
+		env.Tick(10)
+
+		local second = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
+
+		fw.neq(first, second, "the sweep moves the sample value on its own, no ticks from a match needed")
+	end)
+
+	fw.it("creates exactly one ticker for the sweep, not a fresh one on every Refresh", function()
+		_G.MiniDampenDB.Locked = false
+		env.Addon.Display:Refresh()
+		env.Addon.Display:Refresh()
+		env.Addon.Display:Refresh()
+
+		local live = 0
+
+		for _, entry in ipairs(env.Tickers) do
+			if not entry.Ticker:IsCancelled() then
+				live = live + 1
+			end
+		end
+
+		fw.eq(live, 1, "one live ticker driving the sweep")
+	end)
+
+	fw.it("cancels the sweep ticker on locking again", function()
+		_G.MiniDampenDB.Locked = false
+		env.Addon.Display:Refresh()
+
+		_G.MiniDampenDB.Locked = true
+		env.Addon.Display:Refresh()
+
+		fw.truthy(env.Tickers[1].Ticker:IsCancelled(), "ticker cancelled once locked")
+	end)
+
+	fw.it("forces a bracketed value that overrides the sample sweep", function()
+		_G.MiniDampenDB.Locked = false
+		env.Addon.Display:Refresh()
+
+		local unforced = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
+
+		env.Addon.Display:SetForcedDampening(42)
+
+		local forced = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
+
+		fw.falsy(unforced:find("[", 1, true), "the sweep's own reading isn't bracketed")
+		fw.eq(forced, "[42%]", "bracket-marked, replacing the sweep's own reading")
+
+		env.Addon.Display:SetForcedDampening(nil)
+	end)
+
+	fw.it("shows the forced value even locked and outside an arena, and hides once cleared", function()
+		-- Deliberately no env.Enter(): the whole point is inspecting a tier without a real match.
+		env.Addon.Display:SetForcedDampening(75)
+
+		fw.truthy(env.Addon.Display.DampeningBlock.Frame:IsShown(), "forced value shown with no match and Locked")
+
+		env.Addon.Display:SetForcedDampening(nil)
+
+		fw.falsy(env.Addon.Display.DampeningBlock.Frame:IsShown(), "clearing it leaves nothing real to show")
+	end)
+end)
+
+fw.describe("MiniDampen - forced dampening safety", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+	end)
+
+	fw.it("yields to a real match once one is in scope, so a forgotten preview can't leak into it", function()
+		env.Addon.Display:SetForcedDampening(90)
+
+		fw.truthy(env.Addon.Display.DampeningBlock.Frame:IsShown(), "forced value shown before any match starts")
+
+		env.Enter()
+		env.SetDampening(10)
+		env.Tick(0.5)
+
+		local text = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
+
+		fw.eq(text, "10%", "the real reading wins, the forced value never leaked into the match")
+
+		env.Addon.Display:SetForcedDampening(nil)
+	end)
+
+	fw.it("never writes a forced value to saved variables", function()
+		local before = {}
+
+		for key in pairs(_G.MiniDampenDB) do
+			before[key] = true
+		end
+
+		env.Addon.Display:SetForcedDampening(77)
+
+		for key in pairs(_G.MiniDampenDB) do
+			fw.truthy(before[key], "no new saved variable key from forcing a value: " .. tostring(key))
+		end
+
+		env.Addon.Display:SetForcedDampening(nil)
+	end)
+end)
+
 fw.describe("MiniDampen - Blizzard widget dimming", function()
 	local env
 

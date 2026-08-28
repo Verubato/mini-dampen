@@ -14,6 +14,7 @@ local testFiles = {
 	"tests/TestColors.lua",
 	"tests/TestMatchState.lua",
 	"tests/TestDisplay.lua",
+	"tests/TestConfig.lua",
 	"tests/TestSmoke.lua",
 }
 
