@@ -686,3 +686,25 @@ fw.describe("MiniDampen - solo shuffle before the first round", function()
 		fw.falsy(env.Addon.Display.RoundBlock.Frame:IsShown(), "and no round line, since there is no round yet")
 	end)
 end)
+
+fw.describe("MiniDampen - refresh before init", function()
+	fw.it("builds nothing rather than erroring when a refresh arrives before Init ran", function()
+		local env = Arena.Build({ SkipLogin = true })
+
+		-- The config panel's own setters and the media callback both refresh through here, and
+		-- Config initialises before the other two modules.
+		local ok, err = pcall(function()
+			env.Addon:Refresh()
+		end)
+
+		fw.truthy(ok, "a refresh before Init is a no-op, not an error: " .. tostring(err))
+		fw.truthy(env.Addon.Display.Container == nil, "and it built nothing on the way through")
+	end)
+
+	fw.it("gives the preview label a font at build time, since it draws text there", function()
+		local env = Arena.Build()
+
+		fw.truthy(env.Addon.Display.Container.PreviewLabel.__template ~= nil,
+			"SetText refuses a string with no font, and this one is written before any font pass")
+	end)
+end)

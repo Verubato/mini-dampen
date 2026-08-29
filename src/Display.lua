@@ -66,6 +66,7 @@ local PREVIEW_BACKDROP_PADDING = 6
 local DEFAULT_COUNTS_ANCHOR = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -140 }
 local db
 local state
+local initialised = false
 local container
 local countsBlock
 local roundBlock
@@ -398,9 +399,10 @@ local function BuildContainer(frameName, anchorDb, defaultAnchor)
 	-- row.
 	local previewBackdrop = BuildPreviewBackdrop(previewFrame, ContainerHeight(MAX_ROWS))
 
-	local previewLabel = frame:CreateFontString(nil, "OVERLAY")
+	-- Inherits a font because it is the one string drawn text here at build time, and SetText
+	-- refuses a string with no font set. ApplyFonts replaces the object on its first pass.
+	local previewLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	previewLabel:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 2)
-	-- Font object comes from the first ApplyFonts pass, the same as every row's own text.
 	previewLabel:SetText("PREVIEW")
 	previewLabel:SetTextColor(PREVIEW_BORDER.r, PREVIEW_BORDER.g, PREVIEW_BORDER.b, 1)
 
@@ -448,6 +450,11 @@ function M:GetForcedDampening()
 end
 
 function M:Refresh()
+	-- SetForcedDampening and the unlocked ticker reach this without going through addon:Refresh.
+	if not initialised then
+		return
+	end
+
 	ApplyWidgetDimming(state.inScope)
 	ApplyFonts()
 
@@ -508,4 +515,6 @@ function M:Init()
 	M.CountsBlock = countsBlock
 	M.RoundBlock = roundBlock
 	M.DampeningBlock = dampeningBlock
+
+	initialised = true
 end

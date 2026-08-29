@@ -253,10 +253,11 @@ local function InstallOverrides(env)
 	end
 end
 
----Builds a client with MiniDampen loaded and logged in, out of an arena, and hands back the
+---Builds a client with MiniDampen loaded, out of an arena, and hands back the
 ---environment plus the controls that drive it through a match.
+---@param options table? SkipLogin stops before the modules initialise
 ---@return table env
-function M.Build()
+function M.Build(options)
 	-- harness.Load preserves declared saved variables across calls, the way a real client
 	-- carries them across a reload. A fresh Build() is a new test, not a reload, so it has to
 	-- start clean or one test's saved-variable writes would leak into the next.
@@ -303,7 +304,10 @@ function M.Build()
 	}
 
 	InstallOverrides(env)
-	harness.Login(context)
+
+	if not (options and options.SkipLogin) then
+		harness.Login(context)
+	end
 
 	---Fires LibSharedMedia_Registered synchronously, the way the real library fires once per
 	---entry, so a media pack registering several fonts in one frame is a test calling this
