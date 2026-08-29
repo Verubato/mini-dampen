@@ -87,3 +87,125 @@ fw.describe("MiniDampen - /minidampen dampening", function()
 		fw.eq(#env.Context.Mock.State.Prints, before + 1, "one usage message printed")
 	end)
 end)
+
+fw.describe("MiniDampen - /minidampen probe", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+	end)
+
+	local function PrintedSince(before)
+		local prints = env.Context.Mock.State.Prints
+		local lines = {}
+
+		for i = before + 1, #prints do
+			lines[#lines + 1] = prints[i]
+		end
+
+		return lines
+	end
+
+	local function FindLine(lines, needle)
+		for _, line in ipairs(lines) do
+			if line:find(needle, 1, true) then
+				return line
+			end
+		end
+	end
+
+	fw.it("prints something useful out of an arena rather than erroring", function()
+		local before = #env.Context.Mock.State.Prints
+
+		fw.no_error(function()
+			SlashCmdList.MINIDAMPEN("probe")
+		end, "probe outside an arena")
+
+		local lines = PrintedSince(before)
+
+		fw.truthy(#lines > 0, "at least one line printed")
+		fw.truthy(FindLine(lines, "instanceType=none") ~= nil, "says where it was run")
+	end)
+
+	fw.it("runs in an arena too", function()
+		env.Enter()
+
+		fw.no_error(function()
+			SlashCmdList.MINIDAMPEN("probe")
+		end, "probe inside an arena")
+	end)
+
+	fw.it("reports every aura the client hands back, on both filters", function()
+		env.AddAura("HELPFUL", { name = "Dampening", spellId = 110310, points = { 20 } })
+		env.AddAura("HARMFUL", { name = "Corruption", spellId = 172, points = {} })
+
+		local before = #env.Context.Mock.State.Prints
+
+		SlashCmdList.MINIDAMPEN("probe")
+
+		local lines = PrintedSince(before)
+		local helpful = FindLine(lines, "aura HELPFUL")
+		local harmful = FindLine(lines, "aura HARMFUL")
+
+		fw.not_nil(helpful, "the helpful aura was enumerated")
+		fw.truthy(helpful:find("name=Dampening", 1, true) ~= nil, "carries the aura name")
+		fw.truthy(helpful:find("spellId=110310", 1, true) ~= nil, "carries the spell id")
+		fw.truthy(helpful:find("points={20}", 1, true) ~= nil, "carries the whole points array")
+		fw.not_nil(harmful, "the harmful aura was enumerated too")
+	end)
+
+	fw.it("renders a secret aura field as \"secret\" rather than interpolating it", function()
+		env.AddAura("HELPFUL", { name = "Dampening", spellId = Arena.SECRET, points = Arena.SECRET })
+
+		local before = #env.Context.Mock.State.Prints
+
+		SlashCmdList.MINIDAMPEN("probe")
+
+		local line = FindLine(PrintedSince(before), "aura HELPFUL")
+
+		fw.truthy(line:find("spellId=secret", 1, true) ~= nil, "the secret spell id never reached tostring")
+		fw.truthy(line:find("points=secret", 1, true) ~= nil, "and the secret points array was never indexed")
+	end)
+
+	fw.it("names the top-center widgets and whatever their per-type getter returns", function()
+		env.WidgetSetId = 7
+		env.Widgets = { { widgetID = 42, widgetType = 0 } }
+		env.WidgetInfo = { text = "Dampening 20%", shownState = 1 }
+
+		local before = #env.Context.Mock.State.Prints
+
+		SlashCmdList.MINIDAMPEN("probe")
+
+		local lines = PrintedSince(before)
+
+		fw.truthy(FindLine(lines, "topCenterWidgetSet=7") ~= nil, "reports the set id it queried")
+
+		local widget = FindLine(lines, "widget id=42")
+
+		fw.not_nil(widget, "the widget was listed")
+		fw.truthy(widget:find("(IconAndText)", 1, true) ~= nil, "named its visualization type")
+		fw.truthy(widget:find("text=Dampening 20%", 1, true) ~= nil, "a percent sign in widget text survives the chat path")
+	end)
+
+	fw.it("reports the commentator reading, and survives a spectator-only refusal", function()
+		env.CommentatorDampening = 30
+
+		local before = #env.Context.Mock.State.Prints
+
+		SlashCmdList.MINIDAMPEN("probe")
+
+		fw.truthy(
+			FindLine(PrintedSince(before), "C_Commentator.GetDampeningPercent=30") ~= nil,
+			"the commentator value is reported when it answers"
+		)
+
+		env.CommentatorRefuses = true
+		before = #env.Context.Mock.State.Prints
+
+		fw.no_error(function()
+			SlashCmdList.MINIDAMPEN("probe")
+		end, "a refused commentator call")
+
+		fw.truthy(FindLine(PrintedSince(before), "GetDampeningPercent refused") ~= nil, "the refusal is reported, not swallowed")
+	end)
+end)

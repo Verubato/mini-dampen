@@ -15,6 +15,11 @@ local MAX_ROUNDS = 6
 -- The client only ever hands out arena1..3, so this also bounds however many opponents an
 -- API claims to see.
 local MAX_TEAM_SIZE = 3
+-- /minidampen probe enumerates every aura on the player plus a whole widget set, so its output
+-- is capped rather than flooding chat.
+local PROBE_LINE_LIMIT = 60
+local PROBE_AURA_SLOTS = 40
+local PROBE_FILTERS = { "HELPFUL", "HARMFUL" }
 local db
 local bootstrap
 local gated
@@ -55,12 +60,17 @@ end
 local function ReadDeaths(entries)
 	for _, entry in ipairs(entries) do
 		local dead = UnitIsDeadOrGhost(entry.Token)
+		local feign = UnitIsFeignDeath(entry.Token)
+		-- A feigning hunter reads dead. An unreadable feign counts as one, so a corpse is never
+		-- latched from a read that could not rule a feign out.
+		local feigning = mini:IsSecret(feign) or feign == true
 
 		entry.DeathSecret = mini:IsSecret(dead)
+		entry.Feigning = feigning
 
 		if not entry.DeathSecret then
-			entry.Alive = dead ~= true
-			entry.EverDead = entry.EverDead or dead == true
+			entry.Alive = dead ~= true or feigning
+			entry.EverDead = entry.EverDead or (dead == true and not feigning)
 		end
 	end
 end
@@ -141,8 +151,16 @@ local function GrowAlly(size)
 		end
 
 		if not tracked and UnitExists(token) then
-			state.ally[#state.ally + 1] =
-				{ Token = token, Alive = true, Hidden = false, UnseenSince = nil, EverDead = false, Cleared = false, DeathSecret = false }
+			state.ally[#state.ally + 1] = {
+				Token = token,
+				Alive = true,
+				Hidden = false,
+				UnseenSince = nil,
+				EverDead = false,
+				Cleared = false,
+				DeathSecret = false,
+				Feigning = false,
+			}
 		end
 	end
 end
@@ -159,6 +177,7 @@ local function ResizeEnemy(size)
 			EverDead = false,
 			Cleared = false,
 			DeathSecret = false,
+			Feigning = false,
 		}
 	end
 
@@ -476,6 +495,187 @@ local function SafeString(value)
 	return tostring(value)
 end
 
+---Appends a probe line, or the one truncation notice once the cap is reached.
+local function Append(lines, text)
+	if #lines > PROBE_LINE_LIMIT then
+		return
+	end
+
+	if #lines == PROBE_LINE_LIMIT then
+		lines[#lines + 1] = string.format("... capped at %d lines", PROBE_LINE_LIMIT)
+		return
+	end
+
+	lines[#lines + 1] = text
+end
+
+---Renders an aura's points array, which is where a dampening percentage would sit.
+local function PointsText(points)
+	if mini:IsSecret(points) then
+		return "secret"
+	end
+
+	if type(points) ~= "table" then
+		return SafeString(points)
+	end
+
+	local parts = {}
+
+	for i = 1, #points do
+		parts[i] = SafeString(points[i])
+	end
+
+	return "{" .. table.concat(parts, ",") .. "}"
+end
+
+---The first vararg is GetAuraSlots' continuation token rather than a slot. One page is enough
+---for a probe, so the token is dropped instead of paged through.
+local function AppendSlotLines(lines, filter, ...)
+	for i = 2, select("#", ...) do
+		local aura = C_UnitAuras.GetAuraDataBySlot("player", (select(i, ...)))
+
+		if mini:IsSecret(aura) then
+			Append(lines, string.format("aura %s secret", filter))
+		elseif type(aura) == "table" then
+			Append(
+				lines,
+				string.format(
+					"aura %s name=%s spellId=%s points=%s",
+					filter,
+					SafeString(aura.name),
+					SafeString(aura.spellId),
+					PointsText(aura.points)
+				)
+			)
+		end
+	end
+end
+
+local function AppendAuraLines(lines, filter)
+	if type(C_UnitAuras.GetAuraSlots) ~= "function" or type(C_UnitAuras.GetAuraDataBySlot) ~= "function" then
+		Append(lines, "aura slot enumeration unavailable")
+		return
+	end
+
+	AppendSlotLines(lines, filter, C_UnitAuras.GetAuraSlots("player", filter, PROBE_AURA_SLOTS))
+end
+
+---Reverses the visualization type enum so a widget can name its own per-type getter.
+local function WidgetTypeName(widgetType)
+	local types = Enum and Enum.UIWidgetVisualizationType
+
+	if type(types) ~= "table" then
+		return nil
+	end
+
+	for name, value in pairs(types) do
+		if value == widgetType then
+			return name
+		end
+	end
+end
+
+---Some getters carry "Widget" in their name and some do not, so both spellings are tried.
+local function WidgetInfo(widgetId, typeName)
+	local getter = C_UIWidgetManager["Get" .. typeName .. "WidgetVisualizationInfo"]
+		or C_UIWidgetManager["Get" .. typeName .. "VisualizationInfo"]
+
+	if not getter then
+		return nil
+	end
+
+	return getter(widgetId)
+end
+
+---Flattens whatever scalar fields a visualization info table happens to carry, since the shape
+---differs per widget type and the interesting one is whichever holds a percentage.
+local function InfoText(info)
+	if mini:IsSecret(info) then
+		return "secret"
+	end
+
+	if type(info) ~= "table" then
+		return SafeString(info)
+	end
+
+	local parts = {}
+
+	for key, value in pairs(info) do
+		if mini:IsSecret(value) then
+			parts[#parts + 1] = tostring(key) .. "=secret"
+		elseif type(value) == "string" or type(value) == "number" or type(value) == "boolean" then
+			parts[#parts + 1] = tostring(key) .. "=" .. tostring(value)
+		end
+	end
+
+	table.sort(parts)
+
+	return table.concat(parts, " ")
+end
+
+local function AppendWidgetLines(lines)
+	if type(C_UIWidgetManager) ~= "table" then
+		Append(lines, "widgets C_UIWidgetManager unavailable")
+		return
+	end
+
+	local setId = C_UIWidgetManager.GetTopCenterWidgetSetID()
+
+	Append(lines, string.format("topCenterWidgetSet=%s", SafeString(setId)))
+
+	if mini:IsSecret(setId) or type(setId) ~= "number" then
+		return
+	end
+
+	local widgets = C_UIWidgetManager.GetAllWidgetsBySetID(setId)
+
+	if mini:IsSecret(widgets) or type(widgets) ~= "table" then
+		Append(lines, string.format("widgets %s", SafeString(widgets)))
+		return
+	end
+
+	for _, widget in ipairs(widgets) do
+		if mini:IsSecret(widget) or type(widget) ~= "table" then
+			Append(lines, "widget secret")
+			break
+		end
+
+		local widgetId = widget.widgetID
+		local widgetType = widget.widgetType
+		local typeName = not mini:IsSecret(widgetType) and WidgetTypeName(widgetType) or nil
+		local info = (typeName and not mini:IsSecret(widgetId)) and WidgetInfo(widgetId, typeName) or nil
+
+		Append(
+			lines,
+			string.format(
+				"widget id=%s type=%s (%s) %s",
+				SafeString(widgetId),
+				SafeString(widgetType),
+				SafeString(typeName),
+				InfoText(info)
+			)
+		)
+	end
+end
+
+---GetDampeningPercent is documented without a spectator gate, but it lives in the commentator
+---namespace, so a refusal is caught rather than killing the rest of the probe.
+local function AppendCommentatorLine(lines)
+	if type(C_Commentator) ~= "table" or type(C_Commentator.GetDampeningPercent) ~= "function" then
+		Append(lines, "C_Commentator.GetDampeningPercent unavailable")
+		return
+	end
+
+	local ok, percent = pcall(C_Commentator.GetDampeningPercent)
+
+	if not ok then
+		Append(lines, "C_Commentator.GetDampeningPercent refused")
+		return
+	end
+
+	Append(lines, string.format("C_Commentator.GetDampeningPercent=%s", SafeString(percent)))
+end
+
 ---In scope for as long as a match is running: not Inactive before it starts, not Complete
 ---once the results screen is up.
 local function EvaluateGate()
@@ -576,27 +776,47 @@ function M:Debug()
 
 	for _, entry in ipairs(state.ally) do
 		lines[#lines + 1] = string.format(
-			"ally %s alive=%s hidden=%s cleared=%s everDead=%s deathSecret=%s",
+			"ally %s alive=%s hidden=%s cleared=%s everDead=%s deathSecret=%s feigning=%s",
 			SafeString(entry.Token),
 			SafeString(entry.Alive),
 			SafeString(entry.Hidden),
 			SafeString(entry.Cleared),
 			SafeString(entry.EverDead),
-			SafeString(entry.DeathSecret)
+			SafeString(entry.DeathSecret),
+			SafeString(entry.Feigning)
 		)
 	end
 
 	for _, entry in ipairs(state.enemy) do
 		lines[#lines + 1] = string.format(
-			"enemy %s alive=%s hidden=%s cleared=%s everDead=%s deathSecret=%s",
+			"enemy %s alive=%s hidden=%s cleared=%s everDead=%s deathSecret=%s feigning=%s",
 			SafeString(entry.Token),
 			SafeString(entry.Alive),
 			SafeString(entry.Hidden),
 			SafeString(entry.Cleared),
 			SafeString(entry.EverDead),
-			SafeString(entry.DeathSecret)
+			SafeString(entry.DeathSecret),
+			SafeString(entry.Feigning)
 		)
 	end
+
+	return lines
+end
+
+---Dumps every place retail could be keeping the dampening number: the player's own auras, the
+---top-center widget set, and the commentator API. Nothing here feeds the display.
+function M:Probe()
+	local lines = {}
+	local _, instanceType = IsInInstance()
+
+	Append(lines, string.format("probe instanceType=%s inScope=%s", SafeString(instanceType), SafeString(state.inScope)))
+
+	for _, filter in ipairs(PROBE_FILTERS) do
+		AppendAuraLines(lines, filter)
+	end
+
+	AppendWidgetLines(lines)
+	AppendCommentatorLine(lines)
 
 	return lines
 end

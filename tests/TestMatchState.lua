@@ -178,6 +178,62 @@ fw.describe("MiniDampen - visibility", function()
 		fw.eq(env.Addon.MatchState.State.enemy[3].Alive, false, "still dead, an unresolved read must not overwrite it")
 	end)
 
+	fw.it("keeps a feigning hunter counted alive, even though the death read says otherwise", function()
+		env.Feign("arena2")
+		env.Tick(0.5)
+
+		local entry = env.Addon.MatchState.State.enemy[2]
+
+		fw.eq(entry.Alive, true, "a feign is not a kill")
+
+		local aliveCount = 0
+
+		for _, e in ipairs(env.Addon.MatchState.State.enemy) do
+			if e.Alive then
+				aliveCount = aliveCount + 1
+			end
+		end
+
+		fw.eq(aliveCount, 3, "the enemy count never dips")
+	end)
+
+	fw.it("does not latch EverDead for a feign, so the killed-versus-vanished split survives it", function()
+		env.Feign("arena2")
+		env.Tick(0.5)
+
+		fw.falsy(env.Addon.MatchState.State.enemy[2].EverDead, "no confirmed kill recorded")
+
+		env.StopFeigning("arena2")
+		env.Deaths.arena2 = nil
+		env.Tick(0.5)
+
+		fw.falsy(env.Addon.MatchState.State.enemy[2].EverDead, "still nothing latched once the hunter stands up")
+	end)
+
+	fw.it("still records the real death when a feigning hunter is killed afterwards", function()
+		env.Feign("arena2")
+		env.Tick(0.5)
+
+		env.StopFeigning("arena2")
+		env.Tick(0.5)
+
+		local entry = env.Addon.MatchState.State.enemy[2]
+
+		fw.eq(entry.Alive, false, "dead once the feign is no longer what the death read means")
+		fw.truthy(entry.EverDead, "the real death latches")
+	end)
+
+	fw.it("treats an unreadable feign read as a feign, since inventing a kill is the worse failure", function()
+		env.Kill("arena2")
+		env.SecretFeigns.arena2 = true
+		env.Tick(0.5)
+
+		local entry = env.Addon.MatchState.State.enemy[2]
+
+		fw.eq(entry.Alive, true, "an unreadable feign never drops the count")
+		fw.falsy(entry.EverDead, "and never latches a kill")
+	end)
+
 	fw.it("marks a destroyed opponent dead immediately, even while its own death read stays secret", function()
 		env.MarkDeathSecret("arena3")
 		env.Destroyed("arena3")

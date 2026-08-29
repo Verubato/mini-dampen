@@ -198,6 +198,13 @@ function M:Init()
 				mini:NotifyWithPrefix(line)
 			end
 			return
+		elseif msg == "probe" then
+			-- Passed as an argument rather than as the format string, because a widget's own
+			-- text carries a literal percent sign.
+			for _, line in ipairs(addon.MatchState:Probe()) do
+				mini:NotifyWithPrefix("%s", line)
+			end
+			return
 		end
 
 		if msg == "dampening" then
@@ -229,6 +236,7 @@ function M:Init()
 			mini:NotifyWithPrefix("/minidampen lock")
 			mini:NotifyWithPrefix("/minidampen unlock")
 			mini:NotifyWithPrefix("/minidampen debug")
+			mini:NotifyWithPrefix("/minidampen probe")
 			mini:NotifyWithPrefix("/minidampen dampening <percent>")
 			mini:NotifyWithPrefix("/minidampen dampening clear")
 			return

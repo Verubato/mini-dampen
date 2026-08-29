@@ -32,6 +32,14 @@ local function InstallOverrides(env)
 		Complete = 5,
 	}
 
+	-- Real values, so the probe's reverse lookup from a widget's type to its getter name
+	-- resolves the way it does in game rather than against an auto-vivified empty group.
+	_G.Enum.UIWidgetVisualizationType = {
+		IconAndText = 0,
+		CaptureBar = 1,
+		StatusBar = 2,
+	}
+
 	_G.GetTime = function()
 		return env.Time
 	end
@@ -74,6 +82,14 @@ local function InstallOverrides(env)
 		return env.Deaths[unit] == true
 	end
 
+	_G.UnitIsFeignDeath = function(unit)
+		if env.SecretFeigns[unit] then
+			return M.SECRET
+		end
+
+		return env.Feigns[unit] == true
+	end
+
 	-- rawequal, so this never depends on whether some other test value carries its own __eq.
 	_G.issecretvalue = function(value)
 		return rawequal(value, M.SECRET)
@@ -94,6 +110,48 @@ local function InstallOverrides(env)
 
 		return { points = { env.Dampening } }
 	end
+
+	-- Slot numbers are the index into env.Auras[filter], so the probe's two-call enumeration
+	-- lands back on the same list the test authored.
+	_G.C_UnitAuras.GetAuraSlots = function(_, filter)
+		local auras = env.Auras[filter]
+
+		if not auras then
+			return nil
+		end
+
+		return nil, unpack(auras.Slots)
+	end
+
+	_G.C_UnitAuras.GetAuraDataBySlot = function(_, slot)
+		for _, auras in pairs(env.Auras) do
+			if auras.BySlot[slot] then
+				return auras.BySlot[slot]
+			end
+		end
+	end
+
+	_G.C_UIWidgetManager = {
+		GetTopCenterWidgetSetID = function()
+			return env.WidgetSetId
+		end,
+		GetAllWidgetsBySetID = function()
+			return env.Widgets
+		end,
+		GetIconAndTextWidgetVisualizationInfo = function()
+			return env.WidgetInfo
+		end,
+	}
+
+	_G.C_Commentator = {
+		GetDampeningPercent = function()
+			if env.CommentatorRefuses then
+				error("commentator only")
+			end
+
+			return env.CommentatorDampening
+		end,
+	}
 
 	_G.C_PvP.IsSoloShuffle = function()
 		return env.SoloShuffle
@@ -168,11 +226,20 @@ function M.Build()
 		Winner = nil,
 		Bracket = 1,
 		InstanceId = 1,
+		NextAuraSlot = 0,
 		Dampening = nil,
 		AuraSecret = false,
 		PointsSecret = false,
 		Deaths = {},
 		SecretDeaths = {},
+		Feigns = {},
+		SecretFeigns = {},
+		Auras = {},
+		WidgetSetId = 0,
+		Widgets = {},
+		WidgetInfo = nil,
+		CommentatorDampening = nil,
+		CommentatorRefuses = false,
 		Exists = { player = true, party1 = true, party2 = true, arena1 = true, arena2 = true, arena3 = true },
 		Tickers = {},
 	}
@@ -200,6 +267,37 @@ function M.Build()
 
 	function env.Kill(token)
 		env.Deaths[token] = true
+	end
+
+	---A feigning hunter reads dead to UnitIsDeadOrGhost, so this sets both the way the client
+	---does rather than standing in for a death on its own.
+	function env.Feign(token)
+		env.Deaths[token] = true
+		env.Feigns[token] = true
+	end
+
+	---Ends the feign while the unit stays down, which is what a real death after a feign looks
+	---like from the addon's side.
+	function env.StopFeigning(token)
+		env.Feigns[token] = nil
+		env.SecretFeigns[token] = nil
+	end
+
+	---Publishes one aura on the player under a filter, so /minidampen probe's slot enumeration
+	---has something to walk.
+	function env.AddAura(filter, aura)
+		local auras = env.Auras[filter]
+
+		if not auras then
+			auras = { Slots = {}, BySlot = {} }
+			env.Auras[filter] = auras
+		end
+
+		local slot = (env.NextAuraSlot or 0) + 1
+		env.NextAuraSlot = slot
+
+		auras.Slots[#auras.Slots + 1] = slot
+		auras.BySlot[slot] = aura
 	end
 
 	---Marks a token's next death read as secret rather than a real boolean.
