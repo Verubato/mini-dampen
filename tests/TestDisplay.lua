@@ -338,18 +338,59 @@ fw.describe("MiniDampen - counts row layout", function()
 		env.Enter()
 	end)
 
-	fw.it("anchors the value off the legend's own right edge, not a fixed offset", function()
+	fw.it("centres the value on the block when the counts row draws no legend", function()
 		local point, relativeTo, relativePoint = env.Addon.Display.CountsBlock.Value:GetPoint(1)
 
+		fw.eq(point, "CENTER", "value's own anchor point")
+		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Frame, "centred on the block, not the reserved legend column")
+		fw.eq(relativePoint, "CENTER", "off the frame's own centre")
+	end)
+
+	fw.it("centres the pips row the same way as the value, in Lights", function()
+		_G.MiniDampenDB.DisplayStyle = "Lights"
+		env.Addon.Display:Refresh()
+
+		local point, relativeTo, relativePoint = env.Addon.Display.CountsBlock.Pips:GetPoint(1)
+
+		fw.eq(point, "CENTER", "pips anchor point")
+		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Frame, "pips centred on the block too")
+		fw.eq(relativePoint, "CENTER", "off the frame's own centre")
+	end)
+
+	fw.it("keeps the value left-aligned against the shared legend column in rounds mode", function()
+		local roundsEnv = Arena.Build()
+		roundsEnv.SoloShuffle = true
+		roundsEnv.Enter()
+		roundsEnv.SetState(2) -- StartUp
+		roundsEnv.SetState(3) -- Engaged, so roundIndex is no longer nil
+		roundsEnv.Addon.Display:Refresh()
+
+		local point, relativeTo, relativePoint = roundsEnv.Addon.Display.CountsBlock.Value:GetPoint(1)
+
 		fw.eq(point, "LEFT", "value's own anchor point")
-		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Legend, "anchored to the legend, not the frame, so no fixed offset can undershoot a wide label")
+		fw.eq(relativeTo, roundsEnv.Addon.Display.CountsBlock.Legend, "still anchored to the legend, matching the dampening row")
 		fw.eq(relativePoint, "RIGHT", "off the legend's right edge")
 	end)
 
-	fw.it("anchors the pips row the same way as the value, off the legend's right edge", function()
-		local _, relativeTo = env.Addon.Display.CountsBlock.Pips:GetPoint(1)
+	fw.it("does not move the block's edge as the counts value's own width changes", function()
+		env.Addon.Display:Refresh()
 
-		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Legend, "pips anchored to the legend too")
+		local textBefore = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
+		local widthBefore = env.Addon.Display.CountsBlock.Frame:GetWidth()
+
+		-- Marks both sides ?, "3? vs 3?", the widest reading this row ever draws, versus the
+		-- plain "3 vs 3" above: a real length change, not just a different digit.
+		env.MarkDeathSecret("player")
+		env.MarkDeathSecret("arena1")
+		env.Tick(0.5)
+		env.Addon.Display:Refresh()
+
+		local textAfter = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
+		local widthAfter = env.Addon.Display.CountsBlock.Frame:GetWidth()
+
+		fw.eq(textBefore, "3 vs 3", "starting value has no ? markers")
+		fw.eq(textAfter, "3? vs 3?", "widest value has a ? marker on each side")
+		fw.eq(widthAfter, widthBefore, "block width reserved for the widest value, not the live one")
 	end)
 
 	fw.it("sizes the legend column to fit \"Dampening\", not just the counts row's own blank legend, at either slider extreme", function()

@@ -197,6 +197,18 @@ local function RenderRoundPips(block, effState)
 	LayoutPips(block.Pips, pipWidgets, nil)
 end
 
+---The legend-less counts mode has no column to line up with, so it centres on the block
+---instead of hanging off the legend the way rounds mode and the dampening row do.
+local function AnchorCountsContent(region, centered)
+	region:ClearAllPoints()
+
+	if centered then
+		region:SetPoint("CENTER", countsBlock.Frame, "CENTER", 0, 0)
+	else
+		region:SetPoint("LEFT", countsBlock.Legend, "RIGHT", VALUE_GAP, 0)
+	end
+end
+
 local function CountsMode(effState)
 	if effState.isSoloShuffle and effState.roundIndex ~= nil then
 		return "rounds"
@@ -320,22 +332,32 @@ end
 
 local function RenderCountsBlock(effState, lights)
 	local mode = CountsMode(effState)
+	local centered = mode ~= "rounds"
 
 	-- The legend column itself still exists, sized by ApplySharedWidth, so the value stays in
-	-- the same column both rows share.
+	-- the same column both rows share whenever rounds mode keeps it left-aligned.
 	countsBlock.Legend:SetText(mode == "rounds" and ROUNDS_LEGEND or "")
 
 	if lights then
+		local contentWidth
+
 		if mode == "rounds" then
 			RenderRoundPips(countsBlock, effState)
-			return ROUND_PIPS_WIDTH
+			contentWidth = ROUND_PIPS_WIDTH
+		else
+			RenderCountsPips(countsBlock, effState)
+			contentWidth = COUNTS_PIPS_WIDTH
 		end
 
-		RenderCountsPips(countsBlock, effState)
-		return COUNTS_PIPS_WIDTH
+		-- A CENTER anchor needs a real width to centre around.
+		countsBlock.Pips:SetWidth(contentWidth)
+		AnchorCountsContent(countsBlock.Pips, centered)
+
+		return contentWidth
 	end
 
 	countsBlock.Value:SetText(mode == "rounds" and RoundsValueText(effState) or CountsValueText(effState))
+	AnchorCountsContent(countsBlock.Value, centered)
 
 	return MeasureWidth(countsBlock, mode == "rounds" and WIDEST_ROUNDS_VALUE or WIDEST_COUNTS_VALUE)
 end
