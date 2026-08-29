@@ -13,7 +13,6 @@ local dbDefaults = {
 	Locked = true,
 	FontSize = 16,
 	CountsAnchor = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -140 },
-	DampeningAnchor = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -164 },
 }
 ---@class Config
 local M = {}
@@ -60,7 +59,7 @@ function M:Init()
 	local lockedChk = mini:Checkbox({
 		Parent = panel,
 		LabelText = "Locked",
-		Tooltip = "Unlock to show both blocks everywhere with sample data, and drag them into place.",
+		Tooltip = "Unlock to show the display everywhere with sample data, and drag it into place.",
 		GetValue = function()
 			return db.Locked
 		end,
@@ -76,7 +75,7 @@ function M:Init()
 	local showCountsChk = mini:Checkbox({
 		Parent = panel,
 		LabelText = "Show counts",
-		Tooltip = "Draws the alive-count block, or the round record in solo shuffle.",
+		Tooltip = "Draws the alive-count row, or the round record in solo shuffle.",
 		GetValue = function()
 			return db.ShowCounts
 		end,
@@ -91,7 +90,7 @@ function M:Init()
 	local showDampeningChk = mini:Checkbox({
 		Parent = panel,
 		LabelText = "Show dampening",
-		Tooltip = "Draws the current dampening percentage block.",
+		Tooltip = "Draws the current dampening percentage row.",
 		GetValue = function()
 			return db.ShowDampening
 		end,

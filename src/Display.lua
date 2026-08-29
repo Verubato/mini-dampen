@@ -6,6 +6,9 @@ local Colors = addon.Colors
 local FONT_PATH = "Fonts\\FRIZQT__.TTF"
 local FONT_FLAGS = "OUTLINE"
 local BLOCK_HEIGHT = 20
+-- Top-to-top distance between the two rows.
+local ROW_GAP = 24
+local CONTAINER_HEIGHT_STACKED = ROW_GAP + BLOCK_HEIGHT
 -- Fixed gap after a legend, so nothing that follows it is ever crowded by a long label.
 local VALUE_GAP = 8
 local PIP_BACKING_SIZE = 12
@@ -28,7 +31,7 @@ local WIDEST_DAMPENING_VALUE = "[300%]"
 local COUNTS_PIPS_WIDTH = (MAX_TEAM_SIZE * 2 * PIP_BACKING_SIZE) + ((MAX_TEAM_SIZE * 2 - 1) * PIP_SPACING) + PIP_TEAM_GAP
 local ROUND_PIPS_WIDTH = (MAX_ROUNDS * PIP_CURRENT_BACKING_SIZE) + ((MAX_ROUNDS - 1) * PIP_SPACING)
 -- Sample content drawn everywhere while unlocked, including a continuously sweeping dampening
--- value, so both blocks can be positioned and every colour tier previewed without a real match.
+-- value, so the display can be positioned and every colour tier previewed without a real match.
 local SAMPLE_STATE = {
 	isSoloShuffle = false,
 	teamSize = 3,
@@ -57,14 +60,15 @@ local UNLOCKED_REFRESH_INTERVAL = 0.2
 local PREVIEW_BORDER = { r = 0.81, g = 0.66, b = 0.31 }
 local PREVIEW_FILL = { r = 0.12, g = 0.11, b = 0.10 }
 local PREVIEW_FILL_ALPHA = 0.55
--- Extra room the backdrop gets on both sides of the snug legend+content fit, so the border
--- never hugs the text edge to edge.
+-- Extra room the backdrop gets on both sides of the widest visible row, so the border never
+-- hugs the text edge to edge.
 local PREVIEW_PADDING = 14
-local PREVIEW_BACKDROP_HEIGHT = BLOCK_HEIGHT + 6
+-- Room above and below the rows, so the border never sits right on the text.
+local PREVIEW_BACKDROP_PADDING = 6
 local DEFAULT_COUNTS_ANCHOR = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -140 }
-local DEFAULT_DAMPENING_ANCHOR = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -164 }
 local db
 local state
+local container
 local countsBlock
 local dampeningBlock
 -- Never restore an alpha this addon did not set itself.
@@ -81,6 +85,7 @@ local M = {}
 addon.Display = M
 
 -- Read by tests. Set once in Init and never replaced.
+M.Container = nil
 M.CountsBlock = nil
 M.DampeningBlock = nil
 
@@ -197,16 +202,25 @@ local function RenderRoundPips(block, effState)
 	LayoutPips(block.Pips, pipWidgets, nil)
 end
 
----The legend-less counts mode has no column to line up with, so it centres on the block
----instead of hanging off the legend the way rounds mode and the dampening row do.
-local function AnchorCountsContent(region, centered)
-	region:ClearAllPoints()
+---Centres the content inside a slot reserved at contentWidth, so a reading shorter than the
+---widest placeholder does not hug the legend.
+---@return number the row's width
+local function LayoutRow(block, legendText, region, contentWidth)
+	block.Legend:SetText(legendText)
 
-	if centered then
-		region:SetPoint("CENTER", countsBlock.Frame, "CENTER", 0, 0)
-	else
-		region:SetPoint("LEFT", countsBlock.Legend, "RIGHT", VALUE_GAP, 0)
-	end
+	local hasLegend = legendText ~= ""
+	local legendWidth = hasLegend and block.Legend:GetStringWidth() or 0
+	local gap = hasLegend and VALUE_GAP or 0
+
+	-- Measured from the row's own left rather than the legend's right, so a blank legend needs
+	-- no zero-width string to anchor against.
+	region:ClearAllPoints()
+	region:SetPoint("CENTER", block.Frame, "LEFT", legendWidth + gap + contentWidth / 2, 0)
+
+	local rowWidth = legendWidth + gap + contentWidth
+	block.Frame:SetWidth(rowWidth)
+
+	return rowWidth
 end
 
 local function CountsMode(effState)
@@ -311,32 +325,9 @@ local function MeasureWidth(block, text)
 	return block.Measure:GetStringWidth()
 end
 
----Sizes both blocks to one shared column pair, a legend width covering both labels and a
----value width covering both blocks' widest content, so the two rows line up as one table
----instead of each block centring on its own independent width.
-local function ApplySharedWidth(legendWidth, countsContentWidth, dampeningContentWidth, unlocked)
-	local contentWidth = math.max(countsContentWidth, dampeningContentWidth)
-	local halfPadding = unlocked and (PREVIEW_PADDING / 2) or 0
-	local width = legendWidth + VALUE_GAP + contentWidth + (halfPadding * 2)
-
-	countsBlock.Legend:SetWidth(legendWidth)
-	countsBlock.Legend:ClearAllPoints()
-	countsBlock.Legend:SetPoint("LEFT", countsBlock.Frame, "LEFT", halfPadding, 0)
-	countsBlock.Frame:SetWidth(width)
-
-	dampeningBlock.Legend:SetWidth(legendWidth)
-	dampeningBlock.Legend:ClearAllPoints()
-	dampeningBlock.Legend:SetPoint("LEFT", dampeningBlock.Frame, "LEFT", halfPadding, 0)
-	dampeningBlock.Frame:SetWidth(width)
-end
-
 local function RenderCountsBlock(effState, lights)
 	local mode = CountsMode(effState)
-	local centered = mode ~= "rounds"
-
-	-- The legend column itself still exists, sized by ApplySharedWidth, so the value stays in
-	-- the same column both rows share whenever rounds mode keeps it left-aligned.
-	countsBlock.Legend:SetText(mode == "rounds" and ROUNDS_LEGEND or "")
+	local legendText = mode == "rounds" and ROUNDS_LEGEND or ""
 
 	if lights then
 		local contentWidth
@@ -351,24 +342,51 @@ local function RenderCountsBlock(effState, lights)
 
 		-- A CENTER anchor needs a real width to centre around.
 		countsBlock.Pips:SetWidth(contentWidth)
-		AnchorCountsContent(countsBlock.Pips, centered)
 
-		return contentWidth
+		return LayoutRow(countsBlock, legendText, countsBlock.Pips, contentWidth)
 	end
 
 	countsBlock.Value:SetText(mode == "rounds" and RoundsValueText(effState) or CountsValueText(effState))
-	AnchorCountsContent(countsBlock.Value, centered)
 
-	return MeasureWidth(countsBlock, mode == "rounds" and WIDEST_ROUNDS_VALUE or WIDEST_COUNTS_VALUE)
+	local widestValue = mode == "rounds" and WIDEST_ROUNDS_VALUE or WIDEST_COUNTS_VALUE
+
+	return LayoutRow(countsBlock, legendText, countsBlock.Value, MeasureWidth(countsBlock, widestValue))
 end
 
 -- Lights applies to the counts and round-record row only: MiniDampen's whole point is the
--- dampening percentage, and a single gradient pip is not legible on its own.
+-- dampening percentage, and a single gradient pip is not legible alone.
 local function RenderDampeningBlock(value)
-	dampeningBlock.Legend:SetText(DAMPENING_LEGEND)
 	dampeningBlock.Value:SetText(DampeningValueText(value))
 
-	return MeasureWidth(dampeningBlock, WIDEST_DAMPENING_VALUE)
+	return LayoutRow(dampeningBlock, DAMPENING_LEGEND, dampeningBlock.Value, MeasureWidth(dampeningBlock, WIDEST_DAMPENING_VALUE))
+end
+
+local function LayoutContainer(showCounts, showDampening, countsWidth, dampeningWidth, unlocked)
+	countsBlock.Frame:ClearAllPoints()
+	countsBlock.Frame:SetPoint("TOP", container.Frame, "TOP", 0, 0)
+
+	dampeningBlock.Frame:ClearAllPoints()
+
+	if showCounts then
+		dampeningBlock.Frame:SetPoint("TOP", container.Frame, "TOP", 0, -ROW_GAP)
+	else
+		dampeningBlock.Frame:SetPoint("TOP", container.Frame, "TOP", 0, 0)
+	end
+
+	local stacked = showCounts and showDampening
+
+	container.Frame:SetHeight(stacked and CONTAINER_HEIGHT_STACKED or BLOCK_HEIGHT)
+
+	-- The backdrop art bakes its height in when it is built, so the one matching the container's
+	-- current height is shown rather than resized.
+	container.OneRowBackdrop:SetShown(not stacked)
+	container.StackedBackdrop:SetShown(stacked)
+
+	local width = math.max(showCounts and countsWidth or 0, showDampening and dampeningWidth or 0, 1)
+	local padding = unlocked and PREVIEW_PADDING or 0
+
+	container.Frame:SetWidth(width + padding)
+	container.Frame:SetShown(showCounts or showDampening)
 end
 
 local function ApplyFonts()
@@ -383,41 +401,39 @@ end
 ---SetAlpha rather than Hide, because UIWidgetTopCenterContainerFrame's own visibility gate
 ---undoes a Hide whenever its widget set re-registers.
 local function ApplyWidgetDimming(inScope)
-	local container = _G.UIWidgetTopCenterContainerFrame
+	local widgetContainer = _G.UIWidgetTopCenterContainerFrame
 
-	if not container then
+	if not widgetContainer then
 		return
 	end
 
 	local shouldHide = inScope and db.HideBlizzardWidgets
 
 	if shouldHide and not didWeHide then
-		preexistingAlpha = container:GetAlpha()
-		container:SetAlpha(0)
+		preexistingAlpha = widgetContainer:GetAlpha()
+		widgetContainer:SetAlpha(0)
 		didWeHide = true
 	elseif not shouldHide and didWeHide then
-		container:SetAlpha(preexistingAlpha)
+		widgetContainer:SetAlpha(preexistingAlpha)
 		didWeHide = false
 	end
 end
 
-local function SetPreviewShown(block, shown)
-	block.PreviewFrame:SetShown(shown)
-	block.PreviewLabel:SetShown(shown)
+local function SetPreviewShown(target, shown)
+	target.PreviewFrame:SetShown(shown)
+	target.PreviewLabel:SetShown(shown)
 end
 
----The dampening block never draws Lights, a single gradient pip is not legible alone, so it
+---The dampening row never draws Lights, a single gradient pip is not legible alone, so it
 ---passes withPips = false and gets no pip widgets.
-local function BuildBlock(frameName, anchorDb, defaultAnchor, withPips)
-	local frame = CreateFrame("Frame", frameName, UIParent)
+local function BuildBlock(parent, frameName, withPips)
+	local frame = CreateFrame("Frame", frameName, parent)
 	frame:SetHeight(BLOCK_HEIGHT)
 
 	local legend = frame:CreateFontString(nil, "OVERLAY")
-	legend:SetJustifyH("LEFT")
 	legend:SetPoint("LEFT", frame, "LEFT", 0, 0)
 
 	local value = frame:CreateFontString(nil, "OVERLAY")
-	value:SetJustifyH("LEFT")
 	value:SetPoint("LEFT", legend, "RIGHT", VALUE_GAP, 0)
 
 	-- Never shown: exists only so GetStringWidth() can be asked about a placeholder without
@@ -439,18 +455,42 @@ local function BuildBlock(frameName, anchorDb, defaultAnchor, withPips)
 		end
 	end
 
+	return {
+		Frame = frame,
+		Legend = legend,
+		Value = value,
+		Measure = measure,
+		Pips = pips,
+		PipWidgets = pipWidgets,
+	}
+end
+
+---Bordered and tinted, shown only while unlocked, so sample content can never be mistaken for
+---a live reading.
+local function BuildPreviewBackdrop(parent, containerHeight)
+	local box = CreateFrame("Frame", nil, parent)
+	box:SetAllPoints(parent)
+
+	local field = GUI.RoundedField(box, containerHeight + PREVIEW_BACKDROP_PADDING, "BACKGROUND")
+	field.Fill:SetColor(PREVIEW_FILL.r, PREVIEW_FILL.g, PREVIEW_FILL.b, PREVIEW_FILL_ALPHA)
+	field.Border:SetColor(PREVIEW_BORDER.r, PREVIEW_BORDER.g, PREVIEW_BORDER.b, 1)
+
+	return box
+end
+
+---Builds the single draggable frame the two rows sit on.
+local function BuildContainer(frameName, anchorDb, defaultAnchor)
+	local frame = CreateFrame("Frame", frameName, UIParent)
+
 	-- A dedicated child, so the whole backdrop toggles with one SetShown instead of touching
 	-- GUI.RoundedField's ThreeSlice pieces, which Namespace.lua marks as not public API.
 	local previewFrame = CreateFrame("Frame", nil, frame)
 	previewFrame:SetAllPoints(frame)
-	-- BACKGROUND strata keeps it behind the block's own text regardless of frame level.
+	-- BACKGROUND strata keeps it behind the rows' own text regardless of frame level.
 	previewFrame:SetFrameStrata("BACKGROUND")
 
-	-- Bordered and tinted, shown only while unlocked, so sample content can never be mistaken
-	-- for a live reading.
-	local previewBackdrop = GUI.RoundedField(previewFrame, PREVIEW_BACKDROP_HEIGHT, "BACKGROUND")
-	previewBackdrop.Fill:SetColor(PREVIEW_FILL.r, PREVIEW_FILL.g, PREVIEW_FILL.b, PREVIEW_FILL_ALPHA)
-	previewBackdrop.Border:SetColor(PREVIEW_BORDER.r, PREVIEW_BORDER.g, PREVIEW_BORDER.b, 1)
+	local oneRowBackdrop = BuildPreviewBackdrop(previewFrame, BLOCK_HEIGHT)
+	local stackedBackdrop = BuildPreviewBackdrop(previewFrame, CONTAINER_HEIGHT_STACKED)
 
 	local previewLabel = frame:CreateFontString(nil, "OVERLAY")
 	previewLabel:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 2)
@@ -461,22 +501,19 @@ local function BuildBlock(frameName, anchorDb, defaultAnchor, withPips)
 	mini:MakeMovable(frame, anchorDb, { IsLocked = function() return db.Locked end })
 	mini:ApplyPosition(frame, anchorDb, defaultAnchor)
 
-	local block = {
+	local built = {
 		Frame = frame,
-		Legend = legend,
-		Value = value,
-		Measure = measure,
-		Pips = pips,
-		PipWidgets = pipWidgets,
 		PreviewFrame = previewFrame,
 		PreviewLabel = previewLabel,
+		OneRowBackdrop = oneRowBackdrop,
+		StackedBackdrop = stackedBackdrop,
 	}
 
-	-- Otherwise both blocks draw a PREVIEW caption at width 0 for the moment between Init and
-	-- the first Refresh.
-	SetPreviewShown(block, false)
+	-- Otherwise the container draws a PREVIEW caption at width 0 for the moment between Init
+	-- and the first Refresh.
+	SetPreviewShown(built, false)
 
-	return block
+	return built
 end
 
 local function ApplyUnlockedTicker(unlocked)
@@ -534,37 +571,31 @@ function M:Refresh()
 	countsBlock.Frame:SetShown(showCounts)
 	dampeningBlock.Frame:SetShown(showDampening)
 
-	mini:SetPositionLocked(countsBlock.Frame, db.Locked)
-	mini:SetPositionLocked(dampeningBlock.Frame, db.Locked)
+	mini:SetPositionLocked(container.Frame, db.Locked)
+	SetPreviewShown(container, unlocked)
 
-	SetPreviewShown(countsBlock, unlocked)
-	SetPreviewShown(dampeningBlock, unlocked)
-
-	-- Measured ahead of the content below, so the two placeholder reads land here rather than
-	-- clobbering whatever content width Render*Block just measured into the same scratch string.
-	-- ROUNDS_LEGEND stands in for the counts row's own blank legend: whichever of the two is
-	-- wider still sets the shared legend column, so the value in both rows stays aligned.
-	local legendWidth = math.max(MeasureWidth(countsBlock, ROUNDS_LEGEND), MeasureWidth(dampeningBlock, DAMPENING_LEGEND))
-	local countsContentWidth, dampeningContentWidth = 0, 0
+	local countsRowWidth, dampeningRowWidth = 0, 0
 
 	if showCounts then
-		countsContentWidth = RenderCountsBlock(effState, lights)
+		countsRowWidth = RenderCountsBlock(effState, lights)
 	end
 
 	if showDampening then
-		dampeningContentWidth = RenderDampeningBlock(dampeningValue)
+		dampeningRowWidth = RenderDampeningBlock(dampeningValue)
 	end
 
-	ApplySharedWidth(legendWidth, countsContentWidth, dampeningContentWidth, unlocked)
+	LayoutContainer(showCounts, showDampening, countsRowWidth, dampeningRowWidth, unlocked)
 end
 
 function M:Init()
 	db = mini:GetSavedVars()
 	state = addon.MatchState.State
 
-	countsBlock = BuildBlock(addonName .. "CountsFrame", db.CountsAnchor, DEFAULT_COUNTS_ANCHOR, true)
-	dampeningBlock = BuildBlock(addonName .. "DampeningFrame", db.DampeningAnchor, DEFAULT_DAMPENING_ANCHOR, false)
+	container = BuildContainer(addonName .. "Frame", db.CountsAnchor, DEFAULT_COUNTS_ANCHOR)
+	countsBlock = BuildBlock(container.Frame, addonName .. "CountsFrame", true)
+	dampeningBlock = BuildBlock(container.Frame, addonName .. "DampeningFrame", false)
 
+	M.Container = container
 	M.CountsBlock = countsBlock
 	M.DampeningBlock = dampeningBlock
 

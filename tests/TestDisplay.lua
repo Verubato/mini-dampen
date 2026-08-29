@@ -1,5 +1,6 @@
 -- Display.lua never reads WoW APIs directly, so these drive it through tests/Helpers/Arena.lua
--- the same way TestMatchState.lua does, and read back the two blocks it built in Init.
+-- the same way TestMatchState.lua does, and read back the container and the two rows it built
+-- in Init.
 
 local fw = require("TestFramework")
 local Arena = require("Arena")
@@ -101,6 +102,15 @@ end
 
 local function ColorCode(color)
 	return string.format("%02x%02x%02x", color[1] * 255, color[2] * 255, color[3] * 255)
+end
+
+-- Display.lua's own VALUE_GAP, which it does not export.
+local VALUE_GAP = 8
+
+---Where a row's content centre must land, given LayoutRow reserves legend + gap + content and
+---centres the content in the last of those.
+local function ExpectedContentCentre(block)
+	return (block.Frame:GetWidth() + block.Legend:GetStringWidth() + VALUE_GAP) / 2
 end
 
 fw.describe("MiniDampen - counts value text", function()
@@ -296,8 +306,8 @@ fw.describe("MiniDampen - anchors", function()
 		env.Enter()
 	end)
 
-	fw.it("dragging the counts block writes CountsAnchor and leaves DampeningAnchor untouched", function()
-		local frame = env.Addon.Display.CountsBlock.Frame
+	fw.it("dragging the container writes CountsAnchor", function()
+		local frame = env.Addon.Display.Container.Frame
 
 		frame:ClearAllPoints()
 		frame:SetPoint("TOP", UIParent, "TOP", 42, -99)
@@ -305,28 +315,42 @@ fw.describe("MiniDampen - anchors", function()
 
 		fw.eq(_G.MiniDampenDB.CountsAnchor.X, 42, "counts anchor x written")
 		fw.eq(_G.MiniDampenDB.CountsAnchor.Y, -99, "counts anchor y written")
-		fw.eq(_G.MiniDampenDB.DampeningAnchor.Y, -164, "dampening anchor untouched")
 	end)
 
-	fw.it("a reload restores both anchors independently from saved variables", function()
-		local countsFrame = env.Addon.Display.CountsBlock.Frame
+	fw.it("a reload restores the container's saved position", function()
+		local frame = env.Addon.Display.Container.Frame
 
-		countsFrame:ClearAllPoints()
-		countsFrame:SetPoint("TOP", UIParent, "TOP", 10, -20)
-		countsFrame:GetScript("OnDragStop")(countsFrame)
+		frame:ClearAllPoints()
+		frame:SetPoint("TOP", UIParent, "TOP", 10, -20)
+		frame:GetScript("OnDragStop")(frame)
 
 		env.Reload()
 		env.Enter()
 
-		local _, _, _, x, y = env.Addon.Display.CountsBlock.Frame:GetPoint(1)
+		local _, _, _, x, y = env.Addon.Display.Container.Frame:GetPoint(1)
 
-		fw.eq(x, 10, "counts anchor x survived the reload")
-		fw.eq(y, -20, "counts anchor y survived the reload")
+		fw.eq(x, 10, "container anchor x survived the reload")
+		fw.eq(y, -20, "container anchor y survived the reload")
+	end)
 
-		local _, _, _, dampX, dampY = env.Addon.Display.DampeningBlock.Frame:GetPoint(1)
+	fw.it("carries an existing saved CountsAnchor across to the container, so a user who already placed their display keeps its position", function()
+		_G.MiniDampenDB.CountsAnchor.X = 7
+		_G.MiniDampenDB.CountsAnchor.Y = -55
 
-		fw.eq(dampX, 0, "dampening anchor still at its default x")
-		fw.eq(dampY, -164, "dampening anchor still at its default y")
+		env.Reload()
+		env.Enter()
+
+		local _, _, _, x, y = env.Addon.Display.Container.Frame:GetPoint(1)
+
+		fw.eq(x, 7, "existing counts anchor x reused for the container")
+		fw.eq(y, -55, "existing counts anchor y reused for the container")
+	end)
+
+	fw.it("declares no second anchor, so neither row can be positioned on its own", function()
+		env.Reload()
+		env.Enter()
+
+		fw.is_nil(_G.MiniDampenDB.DampeningAnchor, "the dampening row's own saved anchor is gone from the defaults")
 	end)
 end)
 
@@ -338,26 +362,28 @@ fw.describe("MiniDampen - counts row layout", function()
 		env.Enter()
 	end)
 
-	fw.it("centres the value on the block when the counts row draws no legend", function()
-		local point, relativeTo, relativePoint = env.Addon.Display.CountsBlock.Value:GetPoint(1)
+	fw.it("centres the value within the whole frame when the counts row draws no legend", function()
+		local point, relativeTo, relativePoint, x = env.Addon.Display.CountsBlock.Value:GetPoint(1)
 
 		fw.eq(point, "CENTER", "value's own anchor point")
-		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Frame, "centred on the block, not the reserved legend column")
-		fw.eq(relativePoint, "CENTER", "off the frame's own centre")
+		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Frame, "measured from the row itself, so a blank legend is never an anchor target")
+		fw.eq(relativePoint, "LEFT", "off the row's own left edge")
+		fw.eq(x, env.Addon.Display.CountsBlock.Frame:GetWidth() / 2, "a blank legend leaves no gap, so the value's centre lands on the frame's own midpoint")
 	end)
 
 	fw.it("centres the pips row the same way as the value, in Lights", function()
 		_G.MiniDampenDB.DisplayStyle = "Lights"
 		env.Addon.Display:Refresh()
 
-		local point, relativeTo, relativePoint = env.Addon.Display.CountsBlock.Pips:GetPoint(1)
+		local point, relativeTo, relativePoint, x = env.Addon.Display.CountsBlock.Pips:GetPoint(1)
 
 		fw.eq(point, "CENTER", "pips anchor point")
-		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Frame, "pips centred on the block too")
-		fw.eq(relativePoint, "CENTER", "off the frame's own centre")
+		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Frame, "measured from the row itself, same as the value")
+		fw.eq(relativePoint, "LEFT", "off the row's own left edge")
+		fw.eq(x, env.Addon.Display.CountsBlock.Frame:GetWidth() / 2, "pips centred on the frame's own midpoint too")
 	end)
 
-	fw.it("keeps the value left-aligned against the shared legend column in rounds mode", function()
+	fw.it("centres the value within its own reserved slot, past the legend, in rounds mode", function()
 		local roundsEnv = Arena.Build()
 		roundsEnv.SoloShuffle = true
 		roundsEnv.Enter()
@@ -365,11 +391,12 @@ fw.describe("MiniDampen - counts row layout", function()
 		roundsEnv.SetState(3) -- Engaged, so roundIndex is no longer nil
 		roundsEnv.Addon.Display:Refresh()
 
-		local point, relativeTo, relativePoint = roundsEnv.Addon.Display.CountsBlock.Value:GetPoint(1)
+		local point, relativeTo, relativePoint, x = roundsEnv.Addon.Display.CountsBlock.Value:GetPoint(1)
 
-		fw.eq(point, "LEFT", "value's own anchor point")
-		fw.eq(relativeTo, roundsEnv.Addon.Display.CountsBlock.Legend, "still anchored to the legend, matching the dampening row")
-		fw.eq(relativePoint, "RIGHT", "off the legend's right edge")
+		fw.eq(point, "CENTER", "value's own anchor point")
+		fw.eq(relativeTo, roundsEnv.Addon.Display.CountsBlock.Frame, "measured from the row itself")
+		fw.eq(relativePoint, "LEFT", "off the row's own left edge")
+		fw.eq(x, ExpectedContentCentre(roundsEnv.Addon.Display.CountsBlock), "centred in the slot past the legend, not flush against it")
 	end)
 
 	fw.it("does not move the block's edge as the counts value's own width changes", function()
@@ -393,36 +420,98 @@ fw.describe("MiniDampen - counts row layout", function()
 		fw.eq(widthAfter, widthBefore, "block width reserved for the widest value, not the live one")
 	end)
 
-	fw.it("sizes the legend column to fit \"Dampening\", not just the counts row's own blank legend, at either slider extreme", function()
-		for _, fontSize in ipairs({ 10, 24 }) do
-			_G.MiniDampenDB.FontSize = fontSize
-			env.Addon.Display:Refresh()
-
-			local block = env.Addon.Display.DampeningBlock
-
-			block.Measure:SetText("Dampening")
-
-			fw.truthy(
-				block.Legend:GetWidth() >= block.Measure:GetStringWidth(),
-				"legend column at font size " .. fontSize .. " is wide enough for \"Dampening\""
-			)
-		end
-	end)
-
-	fw.it("gives both blocks the same width, so their legends and values share one column", function()
-		env.Addon.Display:Refresh()
-
-		fw.eq(
-			env.Addon.Display.CountsBlock.Frame:GetWidth(),
-			env.Addon.Display.DampeningBlock.Frame:GetWidth(),
-			"both blocks share one width, not each sized to its own content"
-		)
-	end)
-
 	fw.it("draws no legend on the counts row", function()
 		env.Addon.Display:Refresh()
 
 		fw.eq(env.Addon.Display.CountsBlock.Legend:GetText(), "", "the \"Us vs Opponent\" label is gone")
+	end)
+end)
+
+fw.describe("MiniDampen - container layout", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+		env.Enter()
+	end)
+
+	fw.it("the container is movable and neither row is draggable on its own", function()
+		_G.MiniDampenDB.Locked = false
+		env.Addon.Display:Refresh()
+
+		fw.eq(env.Addon.Display.Container.Frame:IsMovable(), true, "the container can be dragged")
+		fw.eq(env.Addon.Display.CountsBlock.Frame:IsMovable(), false, "the counts row cannot be dragged on its own")
+		fw.eq(env.Addon.Display.DampeningBlock.Frame:IsMovable(), false, "the dampening row cannot be dragged on its own")
+		fw.is_nil(env.Addon.Display.CountsBlock.Frame:GetScript("OnDragStart"), "the counts row has no drag script of its own")
+		fw.is_nil(env.Addon.Display.DampeningBlock.Frame:GetScript("OnDragStart"), "the dampening row has no drag script of its own")
+	end)
+
+	fw.it("anchors both rows top-centre on the container", function()
+		env.Addon.Display:Refresh()
+
+		local cPoint, cRelativeTo, cRelativePoint, cx = env.Addon.Display.CountsBlock.Frame:GetPoint(1)
+
+		fw.eq(cPoint, "TOP", "counts row anchor point")
+		fw.eq(cRelativeTo, env.Addon.Display.Container.Frame, "counts row anchored to the container")
+		fw.eq(cRelativePoint, "TOP", "off the container's own top-centre")
+		fw.eq(cx, 0, "no horizontal offset, so the row's own centre matches the container's")
+
+		local dPoint, dRelativeTo, dRelativePoint, dx = env.Addon.Display.DampeningBlock.Frame:GetPoint(1)
+
+		fw.eq(dPoint, "TOP", "dampening row anchor point")
+		fw.eq(dRelativeTo, env.Addon.Display.Container.Frame, "dampening row anchored to the container")
+		fw.eq(dRelativePoint, "TOP", "off the container's own top-centre")
+		fw.eq(dx, 0, "no horizontal offset, so the row's own centre matches the container's")
+	end)
+
+	fw.it("centres the dampening value in its own slot, past its legend", function()
+		env.SetDampening(10)
+		env.Tick(0.5)
+
+		local point, relativeTo, relativePoint, x = env.Addon.Display.DampeningBlock.Value:GetPoint(1)
+
+		fw.eq(point, "CENTER", "value's own anchor point")
+		fw.eq(relativeTo, env.Addon.Display.DampeningBlock.Frame, "measured from the row itself")
+		fw.eq(relativePoint, "LEFT", "off the row's own left edge")
+		fw.eq(x, ExpectedContentCentre(env.Addon.Display.DampeningBlock), "centred in the slot past the legend, not flush against it")
+	end)
+
+	fw.it("sizes the container to the wider of the two rows", function()
+		env.SetDampening(10)
+		env.Tick(0.5)
+
+		local widest = math.max(env.Addon.Display.CountsBlock.Frame:GetWidth(), env.Addon.Display.DampeningBlock.Frame:GetWidth())
+
+		fw.eq(env.Addon.Display.Container.Frame:GetWidth(), widest, "no padding while locked, so the container is exactly the wider row")
+		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 44, "two stacked rows, a 24 gap plus the second row's own 20")
+	end)
+
+	fw.it("hiding the counts row leaves the dampening row at the top with no gap", function()
+		_G.MiniDampenDB.ShowCounts = false
+		env.Addon.Display:Refresh()
+
+		local point, relativeTo, relativePoint, x, y = env.Addon.Display.DampeningBlock.Frame:GetPoint(1)
+
+		fw.eq(point, "TOP", "dampening row anchor point")
+		fw.eq(relativeTo, env.Addon.Display.Container.Frame, "dampening row anchored straight to the container")
+		fw.eq(relativePoint, "TOP", "off the container's own top")
+		fw.eq(x, 0, "no horizontal offset")
+		fw.eq(y, 0, "no gap left behind by the hidden counts row")
+		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 20, "container shrinks to the one visible row's height")
+	end)
+
+	fw.it("shows the backdrop built for the container's current height", function()
+		_G.MiniDampenDB.Locked = false
+		env.Addon.Display:Refresh()
+
+		fw.truthy(env.Addon.Display.Container.StackedBackdrop:IsShown(), "two rows get the taller backdrop")
+		fw.falsy(env.Addon.Display.Container.OneRowBackdrop:IsShown(), "the one-row backdrop stays hidden")
+
+		_G.MiniDampenDB.ShowCounts = false
+		env.Addon.Display:Refresh()
+
+		fw.truthy(env.Addon.Display.Container.OneRowBackdrop:IsShown(), "one row swaps to the shorter backdrop")
+		fw.falsy(env.Addon.Display.Container.StackedBackdrop:IsShown(), "the taller backdrop no longer overhangs the single row")
 	end)
 end)
 
@@ -437,12 +526,12 @@ fw.describe("MiniDampen - preview affordance", function()
 		_G.MiniDampenDB.Locked = true
 		env.Addon.Display:Refresh()
 
-		fw.falsy(env.Addon.Display.CountsBlock.PreviewLabel:IsShown(), "hidden while locked")
+		fw.falsy(env.Addon.Display.Container.PreviewLabel:IsShown(), "hidden while locked")
 
 		_G.MiniDampenDB.Locked = false
 		env.Addon.Display:Refresh()
 
-		fw.truthy(env.Addon.Display.CountsBlock.PreviewLabel:IsShown(), "shown while unlocked")
+		fw.truthy(env.Addon.Display.Container.PreviewLabel:IsShown(), "shown while unlocked")
 	end)
 
 	fw.it("stays draggable while unlocked with no arena entered", function()
@@ -450,7 +539,7 @@ fw.describe("MiniDampen - preview affordance", function()
 		env.Addon.Display:Refresh()
 
 		fw.truthy(env.Addon.Display.CountsBlock.Frame:IsShown(), "sample content visible outside an arena")
-		fw.eq(env.Addon.Display.CountsBlock.Frame:IsMovable(), true, "still draggable with no match running")
+		fw.eq(env.Addon.Display.Container.Frame:IsMovable(), true, "still draggable with no match running")
 	end)
 end)
 
