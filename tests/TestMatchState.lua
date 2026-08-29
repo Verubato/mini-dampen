@@ -989,3 +989,65 @@ fw.describe("MiniDampen - Debug()", function()
 		fw.truthy(FindLine(env.Addon.MatchState:Debug(), "onScreenValues=sample") ~= nil, "sample once unlocked")
 	end)
 end)
+
+fw.describe("MiniDampen - Probe()", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+	end)
+
+	local function FindLine(lines, needle)
+		for _, line in ipairs(lines) do
+			if line:find(needle, 1, true) then
+				return line
+			end
+		end
+	end
+
+	local function FindIndex(lines, needle)
+		for i, line in ipairs(lines) do
+			if line:find(needle, 1, true) then
+				return i
+			end
+		end
+	end
+
+	fw.it("keeps the commentator and widget sections when the aura section throws in an active match", function()
+		env.Enter()
+		env.CommentatorDampening = 30
+		env.WidgetSetId = 7
+		env.Widgets = { { widgetID = 42, widgetType = 0 } }
+		env.AuraSlotsRefuses = true
+
+		local lines = env.Addon.MatchState:Probe()
+
+		fw.truthy(FindLine(lines, "C_Commentator.GetDampeningPercent=30") ~= nil, "commentator section still ran")
+		fw.truthy(FindLine(lines, "topCenterWidgetSet=7") ~= nil, "widget section still ran")
+
+		local failure = FindLine(lines, "aura HELPFUL failed")
+
+		fw.not_nil(failure, "the aura section's failure is named rather than aborting the rest of the probe")
+		fw.truthy(
+			failure:find("Auras cannot be accessed when secret while tainted", 1, true) ~= nil,
+			"carries the underlying error text"
+		)
+	end)
+
+	fw.it("orders the commentator line before the widget lines, which come before the aura lines", function()
+		env.Enter()
+		env.CommentatorDampening = 30
+		env.WidgetSetId = 7
+		env.Widgets = { { widgetID = 42, widgetType = 0 } }
+		env.AddAura("HELPFUL", { name = "Dampening", spellId = 110310, points = { 20 } })
+
+		local lines = env.Addon.MatchState:Probe()
+
+		local commentatorIndex = FindIndex(lines, "C_Commentator.GetDampeningPercent=30")
+		local widgetIndex = FindIndex(lines, "topCenterWidgetSet=7")
+		local auraIndex = FindIndex(lines, "aura HELPFUL")
+
+		fw.truthy(commentatorIndex < widgetIndex, "commentator runs before the widget section")
+		fw.truthy(widgetIndex < auraIndex, "widget section runs before the aura section")
+	end)
+end)

@@ -119,6 +119,12 @@ local function InstallOverrides(env)
 	-- Slot numbers are the index into env.Auras[filter], so the probe's two-call enumeration
 	-- lands back on the same list the test authored.
 	_G.C_UnitAuras.GetAuraSlots = function(_, filter)
+		if env.AuraSlotsRefuses then
+			-- Matches the real client's refusal wording for a secret-tainted read in an active
+			-- arena, so a test can assert on it the way the reported bug's error text does.
+			error("GetAuraSlots(): Auras cannot be accessed when secret while tainted by 'MiniDampen'")
+		end
+
 		local auras = env.Auras[filter]
 
 		if not auras then
@@ -235,6 +241,7 @@ function M.Build()
 		Dampening = nil,
 		AuraSecret = false,
 		PointsSecret = false,
+		AuraSlotsRefuses = false,
 		Deaths = {},
 		SecretDeaths = {},
 		Feigns = {},

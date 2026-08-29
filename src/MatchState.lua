@@ -518,6 +518,16 @@ local function Append(lines, text)
 	lines[#lines + 1] = text
 end
 
+---A diagnostic reports what each source does, so a section that throws is itself the result
+---being collected. That is why this catches an error it cannot otherwise handle.
+local function SafeSection(lines, label, fn)
+	local ok, err = pcall(fn)
+
+	if not ok then
+		Append(lines, label .. " failed: " .. SafeString(err))
+	end
+end
+
 ---Renders an aura's points array, which is where a dampening percentage would sit.
 local function PointsText(points)
 	if mini:IsSecret(points) then
@@ -827,12 +837,21 @@ function M:Probe()
 		)
 	)
 
-	for _, filter in ipairs(PROBE_FILTERS) do
-		AppendAuraLines(lines, filter)
-	end
+	-- Ordered by value, with the section known to throw in an active match last, so a live
+	-- arena still reports the commentator reading and the widget dump.
+	SafeSection(lines, "commentator", function()
+		AppendCommentatorLine(lines)
+	end)
 
-	AppendWidgetLines(lines)
-	AppendCommentatorLine(lines)
+	SafeSection(lines, "widgets", function()
+		AppendWidgetLines(lines)
+	end)
+
+	for _, filter in ipairs(PROBE_FILTERS) do
+		SafeSection(lines, "aura " .. filter, function()
+			AppendAuraLines(lines, filter)
+		end)
+	end
 
 	return lines
 end
