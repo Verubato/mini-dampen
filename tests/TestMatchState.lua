@@ -611,6 +611,63 @@ fw.describe("MiniDampen - team size derivation", function()
 		fw.eq(env.Addon.MatchState.State.ally[3].Token, "party2", "third slot is party2")
 	end)
 
+	fw.it("derives the team size from the player's own group when neither enemy-side count answers", function()
+		-- The bot arena prep room the defect was reported from: both enemy-side counts read zero
+		-- until the gates open, so the counts row sat at 0 vs 0 for the whole prep room.
+		env.Specs = 0
+		env.Opponents = 0
+		env.Context.Mock.State.GroupMembers = 3
+		env.Enter()
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 3, "the group stands in for the shared team size")
+		fw.eq(#env.Addon.MatchState.State.enemy, 3, "enemy roster sized from it")
+		fw.eq(#env.Addon.MatchState.State.ally, 3, "ally roster sized from it")
+	end)
+
+	fw.it("ratchets up as a still-loading teammate joins the group, and never back down", function()
+		env.Specs = 0
+		env.Opponents = 0
+		env.Context.Mock.State.GroupMembers = 2
+		env.Enter()
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 2, "only two members in the group so far")
+
+		env.Context.Mock.State.GroupMembers = 3
+		env.Context.Mock.FireEvent("GROUP_ROSTER_UPDATE")
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 3, "grows as the third member finishes loading")
+
+		env.Context.Mock.State.GroupMembers = 2
+		env.Context.Mock.FireEvent("GROUP_ROSTER_UPDATE")
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 3, "a member dropping out doesn't shrink the roster")
+	end)
+
+	fw.it("still takes the live opponent count once the gates open on a short group", function()
+		env.Specs = 0
+		env.Opponents = 0
+		env.Context.Mock.State.GroupMembers = 2
+		env.Enter()
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 2, "the short group is all there is in the prep room")
+
+		env.Opponents = 3
+		env.Seen("arena1")
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 3, "the opponent count outgrows the group reading")
+		fw.eq(#env.Addon.MatchState.State.enemy, 3, "enemy roster grew to match")
+	end)
+
+	fw.it("clamps an over-large group to the arena1..3 ceiling", function()
+		env.Specs = 0
+		env.Opponents = 0
+		env.Context.Mock.State.GroupMembers = 5
+		env.Enter()
+
+		fw.eq(env.Addon.MatchState.State.teamSize, 3, "clamped to the arena1..3 ceiling")
+		fw.eq(#env.Addon.MatchState.State.enemy, 3, "no fourth enemy slot with no token behind it")
+	end)
+
 	fw.it("never shrinks the roster once a higher team size has been confirmed", function()
 		env.Specs = 3
 		env.Opponents = 3

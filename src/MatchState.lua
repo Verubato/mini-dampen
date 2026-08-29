@@ -20,8 +20,8 @@ local bootstrap
 local gated
 local ticker
 local lastMatchState
--- Ratchets up only from a live GetNumArenaOpponents() reading, never down, so a transient
--- undercount after a reload can't shrink a roster already proven real.
+-- Ratchets up only, never down, so a transient undercount after a reload can't shrink a
+-- roster already proven real.
 local teamSizeSeen = 0
 local state = {
 	inScope = false,
@@ -107,7 +107,8 @@ local function Poll()
 	Notify()
 end
 
----Opponents only answers once tokens exist, so specs is the prep-room fallback before any do.
+---Opponents only answers once tokens exist, and specs stays zero in a bot arena, so the
+---player's own group is what carries the prep room. Arena teams are the same size on both sides.
 local function ArenaTeamSize()
 	local opponents = GetNumArenaOpponents and GetNumArenaOpponents() or 0
 
@@ -116,8 +117,9 @@ local function ArenaTeamSize()
 	end
 
 	local specs = GetNumArenaOpponentSpecs and GetNumArenaOpponentSpecs() or 0
+	local group = GetNumGroupMembers and GetNumGroupMembers() or 0
 
-	return math.min(specs, MAX_TEAM_SIZE)
+	return math.min(math.max(specs, group), MAX_TEAM_SIZE)
 end
 
 ---Grows state.ally in place, the same way ResizeEnemy grows the enemy array, so a token that
@@ -506,6 +508,7 @@ function M:Debug()
 	local matchState = C_PvP.GetActiveMatchState()
 	local specs = GetNumArenaOpponentSpecs and GetNumArenaOpponentSpecs()
 	local opponents = GetNumArenaOpponents and GetNumArenaOpponents()
+	local group = GetNumGroupMembers and GetNumGroupMembers()
 
 	lines[#lines + 1] = string.format(
 		"inScope=%s locked=%s instanceType=%s matchState=%s",
@@ -528,12 +531,13 @@ function M:Debug()
 	lines[#lines + 1] = string.format("onScreenValues=%s", source)
 
 	lines[#lines + 1] = string.format(
-		"teamSize=%s allyCount=%s enemyCount=%s GetNumArenaOpponents=%s GetNumArenaOpponentSpecs=%s",
+		"teamSize=%s allyCount=%s enemyCount=%s GetNumArenaOpponents=%s GetNumArenaOpponentSpecs=%s GetNumGroupMembers=%s",
 		SafeString(state.teamSize),
 		SafeString(#state.ally),
 		SafeString(#state.enemy),
 		SafeString(opponents),
-		SafeString(specs)
+		SafeString(specs),
+		SafeString(group)
 	)
 
 	-- Mirrors ReadDampening's own guard order, so a secret aura or points table is never
