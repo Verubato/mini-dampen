@@ -457,14 +457,14 @@ function M:Refresh()
 
 	local effState = unlocked and SampleState() or state
 	local dampeningValue = unlocked and PREVIEW_DAMPENING or effState.dampening
-	-- The preview draws every row whatever the toggles say, so the display is positioned at the
-	-- full size it can reach.
-	local showCounts = unlocked or (state.inScope and db.ShowCounts)
+	-- The preview draws every row regardless, so the display is positioned at the full size it
+	-- can reach.
+	local showCounts = unlocked or state.inScope
 	-- A forced value only wins while no real arena is in scope, since it is an explicit
 	-- diagnostic the user just asked for, not a reading that should outlive a real match starting.
 	local forcedActive = forcedDampening ~= nil and not state.inScope
-	local showDampening = unlocked or (db.ShowDampening and (forcedActive or (state.inScope and dampeningValue ~= nil)))
-	-- The round line rides the counts toggle, since it is the other half of the same reading.
+	local showDampening = unlocked or forcedActive or (state.inScope and dampeningValue ~= nil)
+	-- The round line rides the counts row, since it is the other half of the same reading.
 	local showRounds = showCounts and (unlocked or CountsMode(effState) == "rounds")
 
 	countsBlock.Frame:SetShown(showCounts)

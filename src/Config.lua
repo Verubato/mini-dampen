@@ -6,8 +6,6 @@ local db
 ---@class DB
 local dbDefaults = {
 	Enabled = true,
-	ShowCounts = true,
-	ShowDampening = true,
 	HideBlizzardWidgets = true,
 	Locked = true,
 	FontSize = 16,
@@ -51,7 +49,7 @@ function M:Init()
 	local enabledChk = mini:Checkbox({
 		Parent = panel,
 		LabelText = "Enabled",
-		Tooltip = "Master switch. Off leaves the addon dormant everywhere, including in arena.",
+		Tooltip = "Whether to enable or disable this addon.",
 		GetValue = function()
 			return db.Enabled
 		end,
@@ -66,7 +64,7 @@ function M:Init()
 	local lockedChk = mini:Checkbox({
 		Parent = panel,
 		LabelText = "Locked",
-		Tooltip = "Unlock to show the display everywhere with sample data, and drag it into place.",
+		Tooltip = "Unlock to show sample data and so you can drag the frame into position.",
 		GetValue = function()
 			return db.Locked
 		end,
@@ -79,41 +77,10 @@ function M:Init()
 	lockedChk:SetPoint("TOP", enabledChk, "TOP", 0, 0)
 	lockedChk:SetPoint("LEFT", panel, "LEFT", columnStep, 0)
 
-	local showCountsChk = mini:Checkbox({
-		Parent = panel,
-		LabelText = "Show counts",
-		Tooltip = "Draws the alive-count row, or the round record in solo shuffle.",
-		GetValue = function()
-			return db.ShowCounts
-		end,
-		SetValue = function(value)
-			db.ShowCounts = value
-			addon:Refresh()
-		end,
-	})
-
-	showCountsChk:SetPoint("TOPLEFT", enabledChk, "BOTTOMLEFT", 0, -verticalSpacing)
-
-	local showDampeningChk = mini:Checkbox({
-		Parent = panel,
-		LabelText = "Show dampening",
-		Tooltip = "Draws the current dampening percentage row.",
-		GetValue = function()
-			return db.ShowDampening
-		end,
-		SetValue = function(value)
-			db.ShowDampening = value
-			addon:Refresh()
-		end,
-	})
-
-	showDampeningChk:SetPoint("TOP", showCountsChk, "TOP", 0, 0)
-	showDampeningChk:SetPoint("LEFT", panel, "LEFT", columnStep, 0)
-
 	local hideWidgetsChk = mini:Checkbox({
 		Parent = panel,
-		LabelText = "Hide Blizzard widgets",
-		Tooltip = "Dims Blizzard's own top-center arena widgets while in an arena.",
+		LabelText = "Hide Blizzard",
+		Tooltip = "Whether to hide the Blizzard top arena widget.",
 		GetValue = function()
 			return db.HideBlizzardWidgets
 		end,
@@ -123,7 +90,7 @@ function M:Init()
 		end,
 	})
 
-	hideWidgetsChk:SetPoint("TOPLEFT", showCountsChk, "BOTTOMLEFT", 0, -verticalSpacing)
+	hideWidgetsChk:SetPoint("TOPLEFT", enabledChk, "BOTTOMLEFT", 0, -verticalSpacing)
 
 	local appearanceDivider = mini:Divider({
 		Parent = panel,

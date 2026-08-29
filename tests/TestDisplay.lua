@@ -375,9 +375,9 @@ fw.describe("MiniDampen - container layout", function()
 	end)
 
 	fw.it("hiding the counts row leaves the dampening row at the top with no gap", function()
-		_G.MiniDampenDB.ShowCounts = false
-		env.SetDampening(10)
-		env.Tick(0.5)
+		-- Out of scope is the only way left to hide the counts row.
+		env.Leave()
+		env.Addon.Display:SetForcedDampening(10)
 
 		local point, relativeTo, relativePoint, x, y = env.Addon.Display.DampeningBlock.Frame:GetPoint(1)
 
@@ -387,6 +387,8 @@ fw.describe("MiniDampen - container layout", function()
 		fw.eq(x, 0, "no horizontal offset")
 		fw.eq(y, 0, "no gap left behind by the hidden counts row")
 		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 20, "container shrinks to the one visible row's height")
+
+		env.Addon.Display:SetForcedDampening(nil)
 	end)
 
 	fw.it("stacks the record, the round line, and dampening as three rows in solo shuffle", function()
@@ -418,12 +420,10 @@ fw.describe("MiniDampen - container layout", function()
 
 	fw.it("keeps the container at the height its one backdrop was built for", function()
 		_G.MiniDampenDB.Locked = false
-		_G.MiniDampenDB.ShowCounts = false
-		_G.MiniDampenDB.ShowDampening = false
 		env.Addon.Display:Refresh()
 
 		fw.truthy(env.Addon.Display.Container.PreviewBackdrop:IsVisible(), "the backdrop is up while unlocked")
-		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 68, "three rows whatever the toggles say")
+		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 68, "three rows drawn while unlocked")
 
 		_G.MiniDampenDB.Locked = true
 		env.Addon.Display:Refresh()
@@ -494,10 +494,8 @@ fw.describe("MiniDampen - preview rows", function()
 		env = Arena.Build()
 	end)
 
-	fw.it("draws every row for the whole alternation, whatever the toggles say", function()
+	fw.it("draws every row for the whole alternation", function()
 		_G.MiniDampenDB.Locked = false
-		_G.MiniDampenDB.ShowCounts = false
-		_G.MiniDampenDB.ShowDampening = false
 		env.Addon.Display:Refresh()
 
 		local hiddenRows = {}

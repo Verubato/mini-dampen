@@ -51,10 +51,10 @@ is an optional legend and a value, centred as a unit.
 - While unlocked, the counts row alternates every 10 seconds between the alive counts and a
   sample solo shuffle round record, so both can be previewed outside the match type that
   produces them.
-- While unlocked every row is drawn whatever the toggles say, and the dampening row reads a
-  fixed 50%, so the display is positioned at the full size it can reach.
-- The display sizes itself to whichever rows are currently visible, so a hidden row leaves no
-  gap.
+- While unlocked every row is drawn regardless, and the dampening row reads a fixed 50%, so
+  the display is positioned at the full size it can reach.
+- The dampening row hides itself whenever there is nothing readable to show, leaving no gap
+  behind it.
 
 ### Slash commands
 
@@ -98,9 +98,7 @@ dampening percentage, and your solo shuffle round record in arena."
 | --- | --- | --- | --- |
 | Enabled | checkbox | on | Master switch. Off means the gate never opens. |
 | Locked | checkbox | on | Unlock to preview the display with sample data and drag it. |
-| Show counts | checkbox | on | Draws the alive-count row, or the round record and round line in solo shuffle. |
-| Show dampening | checkbox | on | Draws the dampening row. |
-| Hide Blizzard widgets | checkbox | on | Dims Blizzard's own top-center arena widgets while in scope. |
+| Hide Blizzard | checkbox | on | Dims Blizzard's own top-center arena widgets while in scope. |
 | Font size | slider | 16 | 10-24, applies to every row. |
 | Font | dropdown | Game Default | The face every row draws in. Lists the client's own faces plus anything another addon has registered with LibSharedMedia-3.0. |
 | Outline | dropdown | Outline | None, Outline, or Thick outline. |
@@ -116,5 +114,5 @@ There is no reset-to-defaults button; settings live in MiniDampenDB.
 | Enemy alive count seems to skip an opponent | Either it has been continuously out of sight for 1.5 seconds, drawn hidden without changing the count, or it disconnected or left and Blizzard cleared its visibility override, drawn the same way but this time subtracted from the count and marked with `?` since it can no longer be confirmed alive. A departed ally is handled the same way. |
 | Round record shows a trailing `?` | At least one settled round could not be determined (usually an opponent left before dying), so the total is unknown rather than wrong. |
 | Cannot move the display | "Locked" is checked. Unlock it first. |
-| Blizzard's own arena widgets are gone | Expected while "Hide Blizzard widgets" is on and you are in scope; they return to whatever alpha MiniDampen found them at on leaving, so they can come back dimmed if another addon had already dimmed them. |
+| Blizzard's own arena widgets are gone | Expected while "Hide Blizzard" is on and you are in scope; they return to whatever alpha MiniDampen found them at on leaving, so they can come back dimmed if another addon had already dimmed them. |
 | Need to see the raw values behind any of the above | `/minidampen debug` prints them all to chat, including mid-fight where `/dump` itself is refused. See Slash commands above. |
