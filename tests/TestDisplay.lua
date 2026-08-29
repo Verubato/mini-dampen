@@ -548,6 +548,48 @@ fw.describe("MiniDampen - preview affordance", function()
 
 		fw.eq(StripColor(env.Addon.Display.CountsBlock.Value:GetText()), "3 vs 3", "sample counts read full strength on both sides")
 	end)
+
+	fw.it("alternates the preview between the alive counts and the solo shuffle round record", function()
+		_G.MiniDampenDB.Locked = false
+		env.Addon.Display:Refresh()
+
+		local seen = {}
+
+		-- A full sweep period, so both halves of the alternation are sampled.
+		for _ = 1, 20 do
+			env.Tick(1)
+			seen[StripColor(env.Addon.Display.CountsBlock.Value:GetText())] = true
+		end
+
+		fw.truthy(seen["3 vs 3"], "the alive counts appear in the preview")
+		fw.truthy(seen["(2)-4/6"], "the solo shuffle round record appears in the preview, without needing a shuffle")
+	end)
+
+	fw.it("holds one container width across the alternation, so it cannot resize mid-drag", function()
+		_G.MiniDampenDB.Locked = false
+		-- Lights, where the round pips plus their legend outgrow both the counts pips and the
+		-- dampening row.
+		_G.MiniDampenDB.DisplayStyle = "Lights"
+		env.Addon.Display:Refresh()
+
+		local widths = {}
+
+		for _ = 1, 20 do
+			env.Tick(1)
+			widths[env.Addon.Display.Container.Frame:GetWidth()] = true
+		end
+
+		local distinct = 0
+
+		for _ in pairs(widths) do
+			distinct = distinct + 1
+		end
+
+		fw.eq(distinct, 1, "the container reserves the wider of the two modes rather than tracking whichever is showing")
+		-- The rounds row at font size 16: a 48 wide legend, VALUE_GAP, ROUND_PIPS_WIDTH, and the
+		-- unlocked PREVIEW_PADDING.
+		fw.truthy(widths[48 + 8 + 104 + 14], "reserved at the rounds row's own width, not some wider constant")
+	end)
 end)
 
 fw.describe("MiniDampen - dampening tier preview", function()

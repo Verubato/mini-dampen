@@ -48,6 +48,9 @@ a value, centred as a unit.
   move together and cannot be positioned separately. Unlock to show it everywhere with
   sample data for positioning it outside a match.
 - The "Locked" option prevents dragging (and mouse interaction) on the display.
+- While unlocked, the counts row alternates every 10 seconds between the alive counts and a
+  sample solo shuffle round record, so both can be previewed outside the match type that
+  produces them. It holds the wider of the two widths so it cannot resize mid-drag.
 - The display sizes itself to whichever rows are currently visible: it shrinks to one row's
   height when the other is hidden, rather than leaving a gap.
 

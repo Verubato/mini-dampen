@@ -49,6 +49,12 @@ local SAMPLE_STATE = {
 	roundIndex = nil,
 	roundResults = {},
 }
+-- Four rounds in with two won, so every pip state except unknown gets drawn.
+local SAMPLE_SHUFFLE_STATE = {
+	isSoloShuffle = true,
+	roundIndex = 4,
+	roundResults = { "win", "loss", "win" },
+}
 -- A full up-and-down cycle of the unlocked dampening sweep, topping out at the last colour
 -- stop, which is the highest reading a match ever shows.
 local SWEEP_PERIOD = 20
@@ -309,6 +315,15 @@ local function DampeningValueText(value)
 	return text
 end
 
+---Swaps the sample halfway through each sweep, so the solo shuffle round record gets previewed too.
+local function SampleState()
+	if GetTime() % SWEEP_PERIOD < SWEEP_PERIOD / 2 then
+		return SAMPLE_STATE
+	end
+
+	return SAMPLE_SHUFFLE_STATE
+end
+
 ---Triangle wave over SWEEP_MIN..SWEEP_MAX, rising for the first half of SWEEP_PERIOD and
 ---falling for the second, so a colour tier is crossed going up and again coming back down.
 local function SweepDampening()
@@ -351,6 +366,15 @@ local function RenderCountsBlock(effState, lights)
 	local widestValue = mode == "rounds" and WIDEST_ROUNDS_VALUE or WIDEST_COUNTS_VALUE
 
 	return LayoutRow(countsBlock, legendText, countsBlock.Value, MeasureWidth(countsBlock, widestValue))
+end
+
+---The widest the counts row gets in either mode. The unlocked preview alternates between the
+---two, and a container sized to whichever is showing would resize under the cursor mid-drag.
+local function PreviewCountsWidth(lights)
+	local counts = lights and COUNTS_PIPS_WIDTH or MeasureWidth(countsBlock, WIDEST_COUNTS_VALUE)
+	local rounds = lights and ROUND_PIPS_WIDTH or MeasureWidth(countsBlock, WIDEST_ROUNDS_VALUE)
+
+	return math.max(counts, MeasureWidth(countsBlock, ROUNDS_LEGEND) + VALUE_GAP + rounds)
 end
 
 -- Lights applies to the counts and round-record row only: MiniDampen's whole point is the
@@ -558,7 +582,7 @@ function M:Refresh()
 
 	ApplyUnlockedTicker(unlocked)
 
-	local effState = unlocked and SAMPLE_STATE or state
+	local effState = unlocked and SampleState() or state
 	local dampeningValue = unlocked and SweepDampening() or effState.dampening
 	local visible = unlocked or state.inScope
 	local lights = db.DisplayStyle == LIGHTS
@@ -578,6 +602,10 @@ function M:Refresh()
 
 	if showCounts then
 		countsRowWidth = RenderCountsBlock(effState, lights)
+
+		if unlocked then
+			countsRowWidth = PreviewCountsWidth(lights)
+		end
 	end
 
 	if showDampening then
