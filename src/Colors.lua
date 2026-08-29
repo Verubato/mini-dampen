@@ -3,7 +3,7 @@ local COUNT_FULL = { 0.20, 0.90, 0.30 }
 local COUNT_HURT = { 1.00, 0.82, 0.20 }
 local COUNT_CRITICAL = { 1.00, 0.30, 0.25 }
 local COUNT_WIPED = { 0.45, 0.45, 0.45 }
--- The "?" marker drawn when an opponent is behind cover, and the hidden pip in Lights.
+-- The "?" marker drawn when an opponent is behind cover.
 local COUNT_HIDDEN = { 0.65, 0.65, 0.72 }
 -- { percent, r, g, b }, ascending by percent. ForDampening interpolates between neighbours.
 local DAMPENING_STOPS = {
@@ -13,13 +13,8 @@ local DAMPENING_STOPS = {
 	{ 70, 0.78, 0.40, 0.95 },
 	{ 100, 0.55, 0.15, 0.85 },
 }
-local LIGHT_WON = COUNT_FULL
-local LIGHT_CURRENT = { 1.00, 1.00, 1.00 }
-local LIGHT_LOST = { 0.85, 0.20, 0.20 }
--- Rounds not yet played, and settled rounds whose result could not be determined.
-local LIGHT_PENDING = { 0.28, 0.28, 0.30 }
--- A killed team member's pip in the counts row, distinct from the hidden state.
-local LIGHT_DEAD = { 0.42, 0.10, 0.10 }
+local ROUND_WON = COUNT_FULL
+local ROUND_LOST = { 0.85, 0.20, 0.20 }
 ---@class Colors
 local M = {}
 addon.Colors = M
@@ -29,11 +24,8 @@ M.COUNT_HURT = COUNT_HURT
 M.COUNT_CRITICAL = COUNT_CRITICAL
 M.COUNT_WIPED = COUNT_WIPED
 M.COUNT_HIDDEN = COUNT_HIDDEN
-M.LIGHT_WON = LIGHT_WON
-M.LIGHT_CURRENT = LIGHT_CURRENT
-M.LIGHT_LOST = LIGHT_LOST
-M.LIGHT_PENDING = LIGHT_PENDING
-M.LIGHT_DEAD = LIGHT_DEAD
+M.ROUND_WON = ROUND_WON
+M.ROUND_LOST = ROUND_LOST
 
 local function Lerp(a, b, t)
 	return a + (b - a) * t

@@ -12,14 +12,7 @@ local ROW_GAP = 24
 local MAX_ROWS = 3
 -- Fixed gap after a legend, so nothing that follows it is ever crowded by a long label.
 local VALUE_GAP = 8
-local PIP_BACKING_SIZE = 12
-local PIP_CURRENT_BACKING_SIZE = 14
-local PIP_SPACING = 4
-local PIP_TEAM_GAP = 10
 local MAX_ROUNDS = 6
--- Arena teams cap at 3, so the counts row never needs more than this many pips a side.
-local MAX_TEAM_SIZE = 3
-local LIGHTS = "Lights"
 local DAMPENING_LEGEND = "Dampening"
 -- Widest text each row can produce, measured but never drawn, so the block width never jitters
 -- as the live value's character count changes tick to tick.
@@ -28,10 +21,8 @@ local WIDEST_ROUNDS_VALUE = "6W - 6L?"
 local WIDEST_ROUND_LINE = "Round 6/6"
 -- Reserves room for a three digit percent plus a forced value's brackets, both expected readings.
 local WIDEST_DAMPENING_VALUE = "[300%]"
-local COUNTS_PIPS_WIDTH = (MAX_TEAM_SIZE * 2 * PIP_BACKING_SIZE) + ((MAX_TEAM_SIZE * 2 - 1) * PIP_SPACING) + PIP_TEAM_GAP
-local ROUND_PIPS_WIDTH = (MAX_ROUNDS * PIP_CURRENT_BACKING_SIZE) + ((MAX_ROUNDS - 1) * PIP_SPACING)
--- Sample content drawn everywhere while unlocked, including a continuously sweeping dampening
--- value, so the display can be positioned and every colour tier previewed without a real match.
+-- Sample content drawn everywhere while unlocked, so the display can be positioned without a
+-- real match.
 local SAMPLE_STATE = {
 	isSoloShuffle = false,
 	teamSize = 3,
@@ -45,22 +36,22 @@ local SAMPLE_STATE = {
 		{ Alive = true, Hidden = false },
 		{ Alive = true, Hidden = false },
 	},
-	dampening = 10,
-	roundIndex = nil,
+	-- The round line draws in both halves of the alternation, so it needs a number here.
+	roundIndex = 4,
 	roundResults = {},
 }
--- Four rounds in with two won, so every pip state except unknown gets drawn.
+-- Part way through, so the record reads as a real scoreline rather than a fresh 0W - 0L.
 local SAMPLE_SHUFFLE_STATE = {
 	isSoloShuffle = true,
 	roundIndex = 4,
 	roundResults = { "win", "loss", "win" },
 }
--- A full up-and-down cycle of the unlocked dampening sweep, topping out at the last colour
--- stop, which is the highest reading a match ever shows.
-local SWEEP_PERIOD = 20
-local SWEEP_MIN = 0
-local SWEEP_MAX = 100
-local UNLOCKED_REFRESH_INTERVAL = 0.2
+-- One full swap between the two samples and back.
+local SAMPLE_PERIOD = 20
+-- Mid-range, so the preview reads as a plausible match rather than an extreme.
+local PREVIEW_DAMPENING = 50
+-- Only has to catch the sample swap, which is ten seconds wide.
+local UNLOCKED_REFRESH_INTERVAL = 1
 -- Distinct from every dampening tier colour, so the border never reads as part of the reading
 -- it is warning about.
 local PREVIEW_BORDER = { r = 0.81, g = 0.66, b = 0.31 }
@@ -78,8 +69,7 @@ local container
 local countsBlock
 local roundBlock
 local dampeningBlock
--- Filled once in Init, so the font pass allocates nothing on a path that runs five times a
--- second while unlocked.
+-- Filled once in Init, so the font pass allocates nothing on a path the unlocked ticker runs.
 local allBlocks = {}
 -- Refilled every Refresh, for the same reason, out of a fixed set of row slots.
 local visibleRows = {}
@@ -91,8 +81,8 @@ end
 -- Never restore an alpha this addon did not set itself.
 local didWeHide = false
 local preexistingAlpha
--- Runs only while unlocked, so the sweep animates and the preview stays live even outside an
--- arena, where nothing else calls Refresh on its own.
+-- Runs only while unlocked, so the sample swap keeps happening outside an arena, where nothing
+-- else calls Refresh on its own.
 local unlockedTicker
 -- Never written to saved variables, so a forced value can't survive a reload or be mistaken
 -- for a real setting.
@@ -109,115 +99,6 @@ M.DampeningBlock = nil
 
 local function ColorText(text, color)
 	return string.format("|cff%02x%02x%02x%s|r", color[1] * 255, color[2] * 255, color[3] * 255, text)
-end
-
-local function CreatePip(parent)
-	local backing = parent:CreateTexture(nil, "BACKGROUND")
-	backing:SetSize(PIP_BACKING_SIZE, PIP_BACKING_SIZE)
-	backing:SetColorTexture(0.08, 0.08, 0.08, 1)
-
-	local fill = parent:CreateTexture(nil, "ARTWORK")
-	fill:SetPoint("CENTER", backing, "CENTER", 0, 0)
-
-	return { Backing = backing, Fill = fill }
-end
-
-local function SetPip(pip, backingSize, fillWidth, fillHeight, color)
-	pip.Backing:Show()
-	pip.Backing:SetSize(backingSize, backingSize)
-	pip.Fill:SetSize(fillWidth, fillHeight)
-	pip.Fill:SetColorTexture(color[1], color[2], color[3])
-	pip.Fill:Show()
-end
-
--- A slot within range but with nothing to draw yet, such as a party member still loading.
-local function BlankPip(pip)
-	pip.Backing:Show()
-	pip.Backing:SetSize(PIP_BACKING_SIZE, PIP_BACKING_SIZE)
-	pip.Fill:Hide()
-end
-
--- A slot outside teamSize * 2, such as the unused pair in a 2v2's six-pip row.
-local function HidePip(pip)
-	pip.Backing:Hide()
-	pip.Fill:Hide()
-end
-
-local function SetPipForEntry(pip, entry)
-	if not entry.Alive then
-		SetPip(pip, PIP_BACKING_SIZE, 10, 2, Colors.LIGHT_DEAD)
-	elseif entry.Cleared or entry.Hidden or entry.DeathSecret then
-		SetPip(pip, PIP_BACKING_SIZE, 4, 4, Colors.COUNT_HIDDEN)
-	else
-		SetPip(pip, PIP_BACKING_SIZE, 10, 10, Colors.LIGHT_WON)
-	end
-end
-
----Chains every pip's left edge off the one before it, with an extra gap inserted before
----midGapIndex to separate the ally and enemy halves of the counts row. nil skips the gap.
-local function LayoutPips(pipsFrame, pipWidgets, midGapIndex)
-	for i, pip in ipairs(pipWidgets) do
-		pip.Backing:ClearAllPoints()
-
-		if i == 1 then
-			pip.Backing:SetPoint("LEFT", pipsFrame, "LEFT", 0, 0)
-		else
-			local gap = PIP_SPACING + ((i == midGapIndex) and PIP_TEAM_GAP or 0)
-			pip.Backing:SetPoint("LEFT", pipWidgets[i - 1].Backing, "RIGHT", gap, 0)
-		end
-	end
-end
-
-local function RenderCountsPips(block, effState)
-	local teamSize = effState.teamSize
-	local pipWidgets = block.PipWidgets
-
-	for i = 1, MAX_TEAM_SIZE * 2 do
-		if i <= teamSize then
-			local entry = effState.ally[i]
-
-			if entry then
-				SetPipForEntry(pipWidgets[i], entry)
-			else
-				BlankPip(pipWidgets[i])
-			end
-		elseif i <= teamSize * 2 then
-			local entry = effState.enemy[i - teamSize]
-
-			if entry then
-				SetPipForEntry(pipWidgets[i], entry)
-			else
-				BlankPip(pipWidgets[i])
-			end
-		else
-			HidePip(pipWidgets[i])
-		end
-	end
-
-	LayoutPips(block.Pips, pipWidgets, teamSize + 1)
-end
-
-local function RenderRoundPips(block, effState)
-	local pipWidgets = block.PipWidgets
-
-	for i = 1, MAX_ROUNDS do
-		local pip = pipWidgets[i]
-		local result = effState.roundResults[i]
-
-		if result == "win" then
-			SetPip(pip, PIP_BACKING_SIZE, 10, 10, Colors.LIGHT_WON)
-		elseif result == "loss" then
-			SetPip(pip, PIP_BACKING_SIZE, 10, 2, Colors.LIGHT_LOST)
-		elseif result == "unknown" then
-			SetPip(pip, PIP_BACKING_SIZE, 4, 4, Colors.LIGHT_PENDING)
-		elseif i == effState.roundIndex then
-			SetPip(pip, PIP_CURRENT_BACKING_SIZE, 12, 12, Colors.LIGHT_CURRENT)
-		else
-			SetPip(pip, PIP_BACKING_SIZE, 4, 4, Colors.LIGHT_PENDING)
-		end
-	end
-
-	LayoutPips(block.Pips, pipWidgets, nil)
 end
 
 ---Centres the content inside a slot reserved at contentWidth, so a reading shorter than the
@@ -308,7 +189,7 @@ local function RoundsValueText(effState)
 		end
 	end
 
-	local text = ColorText(wins .. "W", Colors.LIGHT_WON) .. " - " .. ColorText(losses .. "L", Colors.LIGHT_LOST)
+	local text = ColorText(wins .. "W", Colors.ROUND_WON) .. " - " .. ColorText(losses .. "L", Colors.ROUND_LOST)
 
 	if hasUnknown then
 		text = text .. ColorText("?", Colors.COUNT_HIDDEN)
@@ -338,23 +219,13 @@ local function DampeningValueText(value)
 	return text
 end
 
----Swaps the sample halfway through each sweep, so the solo shuffle round record gets previewed too.
+---Swaps the sample halfway through each period, so the solo shuffle round record gets previewed too.
 local function SampleState()
-	if GetTime() % SWEEP_PERIOD < SWEEP_PERIOD / 2 then
+	if GetTime() % SAMPLE_PERIOD < SAMPLE_PERIOD / 2 then
 		return SAMPLE_STATE
 	end
 
 	return SAMPLE_SHUFFLE_STATE
-end
-
----Triangle wave over SWEEP_MIN..SWEEP_MAX, rising for the first half of SWEEP_PERIOD and
----falling for the second, so a colour tier is crossed going up and again coming back down.
-local function SweepDampening()
-	local half = SWEEP_PERIOD / 2
-	local phase = GetTime() % SWEEP_PERIOD
-	local progress = phase <= half and (phase / half) or (2 - phase / half)
-
-	return math.floor(SWEEP_MIN + (SWEEP_MAX - SWEEP_MIN) * progress + 0.5)
 end
 
 local function MeasureWidth(block, text)
@@ -363,25 +234,8 @@ local function MeasureWidth(block, text)
 	return block.Measure:GetStringWidth()
 end
 
-local function RenderCountsBlock(effState, lights)
+local function RenderCountsBlock(effState)
 	local mode = CountsMode(effState)
-
-	if lights then
-		local contentWidth
-
-		if mode == "rounds" then
-			RenderRoundPips(countsBlock, effState)
-			contentWidth = ROUND_PIPS_WIDTH
-		else
-			RenderCountsPips(countsBlock, effState)
-			contentWidth = COUNTS_PIPS_WIDTH
-		end
-
-		-- A CENTER anchor needs a real width to centre around.
-		countsBlock.Pips:SetWidth(contentWidth)
-
-		return LayoutRow(countsBlock, "", countsBlock.Pips, contentWidth)
-	end
 
 	countsBlock.Value:SetText(mode == "rounds" and RoundsValueText(effState) or CountsValueText(effState))
 
@@ -390,23 +244,12 @@ local function RenderCountsBlock(effState, lights)
 	return LayoutRow(countsBlock, "", countsBlock.Value, MeasureWidth(countsBlock, widestValue))
 end
 
----The widest the counts row gets in either mode. The unlocked preview alternates between the
----two, and a container sized to whichever is showing would resize under the cursor mid-drag.
-local function PreviewCountsWidth(lights)
-	local counts = lights and COUNTS_PIPS_WIDTH or MeasureWidth(countsBlock, WIDEST_COUNTS_VALUE)
-	local rounds = lights and ROUND_PIPS_WIDTH or MeasureWidth(countsBlock, WIDEST_ROUNDS_VALUE)
-
-	return math.max(counts, rounds)
-end
-
 local function RenderRoundBlock(effState)
 	roundBlock.Value:SetText(RoundLineText(effState))
 
 	return LayoutRow(roundBlock, "", roundBlock.Value, MeasureWidth(roundBlock, WIDEST_ROUND_LINE))
 end
 
--- Lights applies to the counts and round-record row only: MiniDampen's whole point is the
--- dampening percentage, and a single gradient pip is not legible alone.
 local function RenderDampeningBlock(value)
 	dampeningBlock.Value:SetText(DampeningValueText(value))
 
@@ -426,10 +269,9 @@ local function ContainerHeight(rows)
 	return math.max(rows - 1, 0) * ROW_GAP + BLOCK_HEIGHT
 end
 
----Stacks rows from the container's top down. reservedRows and reservedWidth are what the
----container sizes itself to, which the preview holds above what is drawn right now.
-local function LayoutContainer(rows, reservedRows, reservedWidth, unlocked)
-	local width = math.max(reservedWidth, 1)
+---Stacks rows from the container's top down.
+local function LayoutContainer(rows, unlocked)
+	local width = 1
 
 	for i, row in ipairs(rows) do
 		row.Block.Frame:ClearAllPoints()
@@ -438,13 +280,7 @@ local function LayoutContainer(rows, reservedRows, reservedWidth, unlocked)
 		width = math.max(width, row.Width)
 	end
 
-	container.Frame:SetHeight(ContainerHeight(reservedRows))
-
-	-- The backdrop art bakes its height in when it is built, so the one matching the container's
-	-- current height is shown rather than resized.
-	for i = 1, MAX_ROWS do
-		container.Backdrops[i]:SetShown(i == reservedRows)
-	end
+	container.Frame:SetHeight(ContainerHeight(#rows))
 
 	container.Frame:SetWidth(width + (unlocked and PREVIEW_PADDING or 0))
 	container.Frame:SetShown(#rows > 0)
@@ -484,9 +320,7 @@ local function SetPreviewShown(target, shown)
 	target.PreviewLabel:SetShown(shown)
 end
 
----The dampening row never draws Lights, a single gradient pip is not legible alone, so it
----passes withPips = false and gets no pip widgets.
-local function BuildBlock(parent, frameName, withPips)
+local function BuildBlock(parent, frameName)
 	local frame = CreateFrame("Frame", frameName, parent)
 	frame:SetHeight(BLOCK_HEIGHT)
 
@@ -501,27 +335,11 @@ local function BuildBlock(parent, frameName, withPips)
 	local measure = frame:CreateFontString(nil, "OVERLAY")
 	measure:Hide()
 
-	local pips, pipWidgets
-
-	if withPips then
-		pips = CreateFrame("Frame", nil, frame)
-		pips:SetHeight(PIP_BACKING_SIZE)
-		pips:SetPoint("LEFT", legend, "RIGHT", VALUE_GAP, 0)
-
-		pipWidgets = {}
-
-		for i = 1, MAX_ROUNDS do
-			pipWidgets[i] = CreatePip(pips)
-		end
-	end
-
 	return {
 		Frame = frame,
 		Legend = legend,
 		Value = value,
 		Measure = measure,
-		Pips = pips,
-		PipWidgets = pipWidgets,
 	}
 end
 
@@ -549,11 +367,9 @@ local function BuildContainer(frameName, anchorDb, defaultAnchor)
 	-- BACKGROUND strata keeps it behind the rows' own text regardless of frame level.
 	previewFrame:SetFrameStrata("BACKGROUND")
 
-	local backdrops = {}
-
-	for i = 1, MAX_ROWS do
-		backdrops[i] = BuildPreviewBackdrop(previewFrame, ContainerHeight(i))
-	end
+	-- The art bakes its height in. One backdrop only fits because the preview always draws every
+	-- row.
+	local previewBackdrop = BuildPreviewBackdrop(previewFrame, ContainerHeight(MAX_ROWS))
 
 	local previewLabel = frame:CreateFontString(nil, "OVERLAY")
 	previewLabel:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 2)
@@ -568,7 +384,7 @@ local function BuildContainer(frameName, anchorDb, defaultAnchor)
 		Frame = frame,
 		PreviewFrame = previewFrame,
 		PreviewLabel = previewLabel,
-		Backdrops = backdrops,
+		PreviewBackdrop = previewBackdrop,
 	}
 
 	-- Otherwise the container draws a PREVIEW caption at width 0 for the moment between Init
@@ -589,13 +405,6 @@ local function ApplyUnlockedTicker(unlocked)
 	end
 end
 
-function M:SetStyle(style)
-	local lights = style == LIGHTS
-
-	countsBlock.Value:SetShown(not lights)
-	countsBlock.Pips:SetShown(lights)
-end
-
 ---Forces the dampening block to a specific percent, bracket-marked so it never reads as a
 ---live value, until cleared. Yields to a real arena the moment one is in scope, so a forgotten
 ---preview can never be mistaken for what a live match is actually reading.
@@ -613,7 +422,6 @@ end
 
 function M:Refresh()
 	ApplyWidgetDimming(state.inScope)
-	self:SetStyle(db.DisplayStyle)
 	ApplyFonts()
 
 	local unlocked = not db.Locked
@@ -621,16 +429,16 @@ function M:Refresh()
 	ApplyUnlockedTicker(unlocked)
 
 	local effState = unlocked and SampleState() or state
-	local dampeningValue = unlocked and SweepDampening() or effState.dampening
-	local visible = unlocked or state.inScope
-	local lights = db.DisplayStyle == LIGHTS
-	local showCounts = visible and db.ShowCounts
+	local dampeningValue = unlocked and PREVIEW_DAMPENING or effState.dampening
+	-- The preview draws every row whatever the toggles say, so the display is positioned at the
+	-- full size it can reach.
+	local showCounts = unlocked or (state.inScope and db.ShowCounts)
 	-- A forced value only wins while no real arena is in scope, since it is an explicit
 	-- diagnostic the user just asked for, not a reading that should outlive a real match starting.
 	local forcedActive = forcedDampening ~= nil and not state.inScope
-	local showDampening = db.ShowDampening and (forcedActive or (visible and dampeningValue ~= nil))
+	local showDampening = unlocked or (db.ShowDampening and (forcedActive or (state.inScope and dampeningValue ~= nil)))
 	-- The round line rides the counts toggle, since it is the other half of the same reading.
-	local showRounds = showCounts and CountsMode(effState) == "rounds"
+	local showRounds = showCounts and (unlocked or CountsMode(effState) == "rounds")
 
 	countsBlock.Frame:SetShown(showCounts)
 	roundBlock.Frame:SetShown(showRounds)
@@ -642,9 +450,7 @@ function M:Refresh()
 	wipe(visibleRows)
 
 	if showCounts then
-		local width = RenderCountsBlock(effState, lights)
-
-		AddRow(countsBlock, unlocked and PreviewCountsWidth(lights) or width)
+		AddRow(countsBlock, RenderCountsBlock(effState))
 	end
 
 	if showRounds then
@@ -655,17 +461,7 @@ function M:Refresh()
 		AddRow(dampeningBlock, RenderDampeningBlock(dampeningValue))
 	end
 
-	-- The preview alternates between a two row and a three row layout, so while unlocked the
-	-- container holds every row the current settings can produce rather than what is drawn now.
-	local reservedRows = #visibleRows
-	local reservedWidth = 0
-
-	if unlocked then
-		reservedRows = (showCounts and 2 or 0) + (showDampening and 1 or 0)
-		reservedWidth = showCounts and MeasureWidth(roundBlock, WIDEST_ROUND_LINE) or 0
-	end
-
-	LayoutContainer(visibleRows, reservedRows, reservedWidth, unlocked)
+	LayoutContainer(visibleRows, unlocked)
 end
 
 function M:Init()
@@ -673,9 +469,9 @@ function M:Init()
 	state = addon.MatchState.State
 
 	container = BuildContainer(addonName .. "Frame", db.CountsAnchor, DEFAULT_COUNTS_ANCHOR)
-	countsBlock = BuildBlock(container.Frame, addonName .. "CountsFrame", true)
-	roundBlock = BuildBlock(container.Frame, addonName .. "RoundFrame", false)
-	dampeningBlock = BuildBlock(container.Frame, addonName .. "DampeningFrame", false)
+	countsBlock = BuildBlock(container.Frame, addonName .. "CountsFrame")
+	roundBlock = BuildBlock(container.Frame, addonName .. "RoundFrame")
+	dampeningBlock = BuildBlock(container.Frame, addonName .. "DampeningFrame")
 
 	allBlocks[1] = countsBlock
 	allBlocks[2] = roundBlock
@@ -685,6 +481,4 @@ function M:Init()
 	M.CountsBlock = countsBlock
 	M.RoundBlock = roundBlock
 	M.DampeningBlock = dampeningBlock
-
-	self:SetStyle(db.DisplayStyle)
 end

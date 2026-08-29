@@ -44,16 +44,17 @@ is an optional legend and a value, centred as a unit.
 
 ### Positioning
 
-- Drag the display with the left mouse button to move it; every row moves together and none
-  can be positioned separately. Unlock to show it everywhere with
-  sample data for positioning it outside a match.
+- Drag the display with the left mouse button to move it; every row moves together and none can
+  be positioned separately. Unlock to show it everywhere with sample data, for positioning it
+  outside a match.
 - The "Locked" option prevents dragging (and mouse interaction) on the display.
 - While unlocked, the counts row alternates every 10 seconds between the alive counts and a
   sample solo shuffle round record, so both can be previewed outside the match type that
-  produces them. It holds the wider of the two widths so it cannot resize mid-drag.
+  produces them.
+- While unlocked every row is drawn whatever the toggles say, and the dampening row reads a
+  fixed 50%, so the display is positioned at the full size it can reach.
 - The display sizes itself to whichever rows are currently visible, so a hidden row leaves no
-  gap. While unlocked it instead reserves every row the current settings can produce, since
-  the alternating preview would otherwise change height mid-drag.
+  gap.
 
 ### Slash commands
 
@@ -68,9 +69,9 @@ is an optional legend and a value, centred as a unit.
   of combat and in or out of an arena. See the Troubleshooting table below for when this is
   the right tool.
 
-### Display styles
+### Display
 
-Numbers, each row centred independently on the display:
+Each row is centred independently on the display:
 
 ```
       3 vs 3
@@ -87,10 +88,6 @@ always six rounds.
 Dampening  30%
 ```
 
-Lights replaces the value with shape-coded pips (solid = alive/won, small dot = hidden,
-flatline = dead/lost, a larger solid pip = the round in progress). Shape carries the
-meaning; colour is redundant, for colourblind readability.
-
 ## Settings
 
 Single options panel. Panel description reads "Shows a team alive-count, the current
@@ -103,7 +100,6 @@ dampening percentage, and your solo shuffle round record in arena."
 | Show counts | checkbox | on | Draws the alive-count row, or the round record and round line in solo shuffle. |
 | Show dampening | checkbox | on | Draws the dampening row. |
 | Hide Blizzard widgets | checkbox | on | Dims Blizzard's own top-center arena widgets while in scope. |
-| Style | dropdown | Numbers | Numbers or Lights. |
 | Font size | slider | 16 | 10-24, applies to every row. |
 
 There is no reset-to-defaults button; settings live in MiniDampenDB.

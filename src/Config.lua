@@ -6,7 +6,6 @@ local db
 ---@class DB
 local dbDefaults = {
 	Enabled = true,
-	DisplayStyle = "Numbers",
 	ShowCounts = true,
 	ShowDampening = true,
 	HideBlizzardWidgets = true,
@@ -118,33 +117,14 @@ function M:Init()
 
 	hideWidgetsChk:SetPoint("TOPLEFT", showCountsChk, "BOTTOMLEFT", 0, -verticalSpacing)
 
-	local styleDivider = mini:Divider({
+	local appearanceDivider = mini:Divider({
 		Parent = panel,
 		Text = "Appearance",
 	})
 
-	styleDivider:SetPoint("TOP", hideWidgetsChk, "BOTTOM", 0, -verticalSpacing)
-	styleDivider:SetPoint("LEFT", panel, "LEFT")
-	styleDivider:SetPoint("RIGHT", panel, "RIGHT", -horizontalSpacing, 0)
-
-	-- One column. The label is kept short because Dropdown subtracts it from Width, and a long
-	-- one squeezes the box itself.
-	local styleDdl = mini:Dropdown({
-		Parent = panel,
-		Width = columnStep,
-		LabelText = "Style",
-		Tooltip = "Numbers shows counts and percentages. Lights replaces them with shape-coded pips.",
-		Items = { "Numbers", "Lights" },
-		GetValue = function()
-			return db.DisplayStyle
-		end,
-		SetValue = function(value)
-			db.DisplayStyle = value
-			addon:Refresh()
-		end,
-	})
-
-	styleDdl.Label:SetPoint("TOPLEFT", styleDivider, "BOTTOMLEFT", 0, -verticalSpacing * 2)
+	appearanceDivider:SetPoint("TOP", hideWidgetsChk, "BOTTOM", 0, -verticalSpacing)
+	appearanceDivider:SetPoint("LEFT", panel, "LEFT")
+	appearanceDivider:SetPoint("RIGHT", panel, "RIGHT", -horizontalSpacing, 0)
 
 	-- Full width, so the slider has enough travel to land on a value precisely.
 	local fontSizeSlider = mini:Slider({
@@ -163,14 +143,7 @@ function M:Init()
 		end,
 	})
 
-	-- Anchored to the dropdown's label, not the control, since LabelText offsets the control to
-	-- the label's right and anchoring to the control would drift "Font size" off Style's left
-	-- edge.
-	fontSizeSlider.Slider:SetPoint("TOPLEFT", styleDdl.Label, "BOTTOMLEFT", 0, -verticalSpacing * 3)
-
-	panel:HookScript("OnShow", function()
-		styleDdl:MiniRefresh()
-	end)
+	fontSizeSlider.Slider:SetPoint("TOPLEFT", appearanceDivider, "BOTTOMLEFT", 0, -verticalSpacing * 2)
 
 	mini:RegisterSlashCommand(category, panel, {
 		"/minidampen",

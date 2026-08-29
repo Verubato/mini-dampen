@@ -5,97 +5,6 @@
 local fw = require("TestFramework")
 local Arena = require("Arena")
 
-fw.describe("MiniDampen - style swap", function()
-	local env
-
-	fw.before_each(function()
-		env = Arena.Build()
-		env.Enter()
-	end)
-
-	fw.it("Lights hides the value and shows the pips, Numbers is the inverse", function()
-		env.Addon.Display:SetStyle("Lights")
-
-		fw.falsy(env.Addon.Display.CountsBlock.Value:IsShown(), "value hidden in Lights")
-		fw.truthy(env.Addon.Display.CountsBlock.Pips:IsShown(), "pips shown in Lights")
-
-		env.Addon.Display:SetStyle("Numbers")
-
-		fw.truthy(env.Addon.Display.CountsBlock.Value:IsShown(), "value shown in Numbers")
-		fw.falsy(env.Addon.Display.CountsBlock.Pips:IsShown(), "pips hidden in Numbers")
-	end)
-
-	fw.it("Lights leaves the dampening block on Numbers, a single pip is not legible alone", function()
-		env.Addon.Display:SetStyle("Lights")
-
-		fw.truthy(env.Addon.Display.DampeningBlock.Value:IsShown(), "dampening value still shown in Lights")
-		fw.is_nil(env.Addon.Display.DampeningBlock.Pips, "dampening block has no pip widgets to show")
-	end)
-
-	fw.it("a second Refresh creates no new frames", function()
-		env.Addon.Display:Refresh()
-
-		local before = env.Context.Mock.AddonFrameCount()
-
-		env.Addon.Display:Refresh()
-
-		fw.eq(env.Context.Mock.AddonFrameCount(), before, "no new frames created")
-	end)
-end)
-
-fw.describe("MiniDampen - counts pips", function()
-	local env
-
-	fw.before_each(function()
-		env = Arena.Build()
-		env.Enter()
-		-- Refresh() re-derives style from db on every call, including the ones the ticker
-		-- triggers via Tick below, so the setting has to move rather than SetStyle alone.
-		_G.MiniDampenDB.DisplayStyle = "Lights"
-	end)
-
-	fw.it("dead, hidden, and alive states draw three distinct fill sizes", function()
-		env.Kill("arena1")
-		env.Unseen("arena2")
-		env.Tick(2)
-
-		local pips = env.Addon.Display.CountsBlock.PipWidgets
-		-- ally fills pips 1-3, enemy fills pips 4-6 at the default team size of three.
-		local deadFill = pips[4].Fill
-		local hiddenFill = pips[5].Fill
-		local aliveFill = pips[6].Fill
-
-		fw.eq(deadFill:GetWidth(), 10, "dead fill width")
-		fw.eq(deadFill:GetHeight(), 2, "dead fill height, a flatline")
-		fw.eq(hiddenFill:GetWidth(), 4, "hidden fill width")
-		fw.eq(hiddenFill:GetHeight(), 4, "hidden fill height, a dot")
-		fw.eq(aliveFill:GetWidth(), 10, "alive fill width")
-		fw.eq(aliveFill:GetHeight(), 10, "alive fill height, a solid block")
-	end)
-
-	fw.it("draws a cleared opponent as a dot, the same shape as hidden", function()
-		env.Cleared("arena3")
-		env.Tick(2)
-
-		local pips = env.Addon.Display.CountsBlock.PipWidgets
-		local clearedFill = pips[6].Fill
-
-		fw.eq(clearedFill:GetWidth(), 4, "cleared fill width, a dot")
-		fw.eq(clearedFill:GetHeight(), 4, "cleared fill height, a dot")
-	end)
-
-	fw.it("draws an opponent with a secret death read as a dot too, not a confident solid pip", function()
-		env.MarkDeathSecret("arena3")
-		env.Tick(2)
-
-		local pips = env.Addon.Display.CountsBlock.PipWidgets
-		local secretFill = pips[6].Fill
-
-		fw.eq(secretFill:GetWidth(), 4, "secret-death fill width, a dot")
-		fw.eq(secretFill:GetHeight(), 4, "secret-death fill height, a dot")
-	end)
-end)
-
 local function StripColor(text)
 	return (text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
 end
@@ -122,7 +31,6 @@ fw.describe("MiniDampen - counts value text", function()
 	fw.before_each(function()
 		env = Arena.Build()
 		env.Enter()
-		_G.MiniDampenDB.DisplayStyle = "Numbers"
 	end)
 
 	fw.it("renders the counts row as \"N vs N\"", function()
@@ -219,7 +127,6 @@ fw.describe("MiniDampen - round record value text", function()
 		env = Arena.Build()
 		env.SoloShuffle = true
 		env.Enter()
-		_G.MiniDampenDB.DisplayStyle = "Numbers"
 	end)
 
 	local function round(winner)
@@ -239,8 +146,8 @@ fw.describe("MiniDampen - round record value text", function()
 		local text = env.Addon.Display.CountsBlock.Value:GetText()
 
 		fw.eq(StripColor(text), "2W - 2L", "two won and two lost, with no round fraction")
-		fw.truthy(text:find(ColorCode(env.Addon.Colors.LIGHT_WON) .. "2W", 1, true), "the wins wrapped in the won colour")
-		fw.truthy(text:find(ColorCode(env.Addon.Colors.LIGHT_LOST) .. "2L", 1, true), "the losses wrapped in the lost colour")
+		fw.truthy(text:find(ColorCode(env.Addon.Colors.ROUND_WON) .. "2W", 1, true), "the wins wrapped in the won colour")
+		fw.truthy(text:find(ColorCode(env.Addon.Colors.ROUND_LOST) .. "2L", 1, true), "the losses wrapped in the lost colour")
 	end)
 
 	fw.it("puts the current round on its own row below the record", function()
@@ -269,34 +176,6 @@ fw.describe("MiniDampen - round record value text", function()
 		local text = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
 
 		fw.eq(text, "0W - 0L?", "the tally reads ? rather than a wrong number")
-	end)
-end)
-
-fw.describe("MiniDampen - round pips", function()
-	local env
-
-	fw.before_each(function()
-		env = Arena.Build()
-		env.SoloShuffle = true
-		env.Enter()
-	end)
-
-	fw.it("the current round's pip is larger than its settled neighbours", function()
-		env.SetState(2) -- StartUp, round one
-		env.SetState(3) -- Engaged
-		env.SetWinner(0)
-		env.SetState(4) -- PostRound, round one settles
-
-		env.SetState(2) -- StartUp, round two
-		env.SetState(3) -- Engaged, round two is now current and unsettled
-
-		_G.MiniDampenDB.DisplayStyle = "Lights"
-		env.Addon.Display:Refresh()
-
-		local pips = env.Addon.Display.CountsBlock.PipWidgets
-
-		fw.truthy(pips[2].Backing:GetWidth() > pips[1].Backing:GetWidth(), "bigger than round one")
-		fw.truthy(pips[2].Backing:GetWidth() > pips[3].Backing:GetWidth(), "bigger than round three")
 	end)
 end)
 
@@ -388,18 +267,6 @@ fw.describe("MiniDampen - counts row layout", function()
 		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Frame, "measured from the row itself, so a blank legend is never an anchor target")
 		fw.eq(relativePoint, "LEFT", "off the row's own left edge")
 		fw.eq(x, env.Addon.Display.CountsBlock.Frame:GetWidth() / 2, "a blank legend leaves no gap, so the value's centre lands on the frame's own midpoint")
-	end)
-
-	fw.it("centres the pips row the same way as the value, in Lights", function()
-		_G.MiniDampenDB.DisplayStyle = "Lights"
-		env.Addon.Display:Refresh()
-
-		local point, relativeTo, relativePoint, x = env.Addon.Display.CountsBlock.Pips:GetPoint(1)
-
-		fw.eq(point, "CENTER", "pips anchor point")
-		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Frame, "measured from the row itself, same as the value")
-		fw.eq(relativePoint, "LEFT", "off the row's own left edge")
-		fw.eq(x, env.Addon.Display.CountsBlock.Frame:GetWidth() / 2, "pips centred on the frame's own midpoint too")
 	end)
 
 	fw.it("centres the value within its own reserved slot in rounds mode", function()
@@ -548,18 +415,19 @@ fw.describe("MiniDampen - container layout", function()
 		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 44, "the container holds two rows, not three")
 	end)
 
-	fw.it("shows the backdrop built for the container's current height", function()
+	fw.it("keeps the container at the height its one backdrop was built for", function()
 		_G.MiniDampenDB.Locked = false
-		env.Addon.Display:Refresh()
-
-		fw.truthy(env.Addon.Display.Container.Backdrops[3]:IsShown(), "the unlocked preview reserves all three rows, so it gets the tallest backdrop")
-		fw.falsy(env.Addon.Display.Container.Backdrops[1]:IsShown(), "the one-row backdrop stays hidden")
-
 		_G.MiniDampenDB.ShowCounts = false
+		_G.MiniDampenDB.ShowDampening = false
 		env.Addon.Display:Refresh()
 
-		fw.truthy(env.Addon.Display.Container.Backdrops[1]:IsShown(), "one row swaps to the shorter backdrop")
-		fw.falsy(env.Addon.Display.Container.Backdrops[3]:IsShown(), "the taller backdrop no longer overhangs the single row")
+		fw.truthy(env.Addon.Display.Container.PreviewBackdrop:IsVisible(), "the backdrop is up while unlocked")
+		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 68, "three rows whatever the toggles say")
+
+		_G.MiniDampenDB.Locked = true
+		env.Addon.Display:Refresh()
+
+		fw.falsy(env.Addon.Display.Container.PreviewBackdrop:IsVisible(), "and gone once locked, so it never frames a live reading")
 	end)
 end)
 
@@ -602,85 +470,59 @@ fw.describe("MiniDampen - preview affordance", function()
 		env.Addon.Display:Refresh()
 
 		local seen = {}
+		local roundLines = {}
 
-		-- A full sweep period, so both halves of the alternation are sampled.
+		-- A full sample period, so both halves of the alternation are sampled.
 		for _ = 1, 20 do
 			env.Tick(1)
 			seen[StripColor(env.Addon.Display.CountsBlock.Value:GetText())] = true
+			roundLines[StripColor(env.Addon.Display.RoundBlock.Value:GetText())] = true
 		end
 
 		fw.truthy(seen["3 vs 3"], "the alive counts appear in the preview")
 		fw.truthy(seen["2W - 1L"], "the solo shuffle round record appears in the preview, without needing a shuffle")
-	end)
-
-	fw.it("holds one container width across the alternation, so it cannot resize mid-drag", function()
-		_G.MiniDampenDB.Locked = false
-		-- Lights, where the round pips are the widest thing the counts row draws.
-		_G.MiniDampenDB.DisplayStyle = "Lights"
-		-- The dampening row is wider than either counts mode, so with it on the container never
-		-- tracks the swing under test at all.
-		_G.MiniDampenDB.ShowDampening = false
-		env.Addon.Display:Refresh()
-
-		local widths = {}
-
-		for _ = 1, 20 do
-			env.Tick(1)
-			widths[env.Addon.Display.Container.Frame:GetWidth()] = true
-		end
-
-		local distinct = 0
-
-		for _ in pairs(widths) do
-			distinct = distinct + 1
-		end
-
-		fw.eq(distinct, 1, "the container reserves the wider of the two modes rather than tracking whichever is showing")
-		-- ROUND_PIPS_WIDTH, the wider of the two modes, plus the unlocked PREVIEW_PADDING.
-		fw.truthy(widths[104 + 14], "reserved at the rounds row's own width, not some wider constant")
+		fw.truthy(roundLines["Round 4/6"], "the round line reads a real round in both halves")
+		fw.falsy(roundLines["Round 0/6"], "and never the empty fallback")
 	end)
 end)
 
-fw.describe("MiniDampen - preview width in Numbers", function()
+fw.describe("MiniDampen - preview rows", function()
 	local env
 
 	fw.before_each(function()
 		env = Arena.Build()
 	end)
 
-	fw.it("holds the round line's width too, which only joins the stack on the shuffle half", function()
+	fw.it("draws every row for the whole alternation, whatever the toggles say", function()
 		_G.MiniDampenDB.Locked = false
-		-- Numbers with dampening off, the one setting where the round line is the widest row and
-		-- nothing else covers for it.
-		_G.MiniDampenDB.DisplayStyle = "Numbers"
+		_G.MiniDampenDB.ShowCounts = false
 		_G.MiniDampenDB.ShowDampening = false
 		env.Addon.Display:Refresh()
 
-		local widths = {}
+		local hiddenRows = {}
 
 		for _ = 1, 20 do
 			env.Tick(1)
-			widths[env.Addon.Display.Container.Frame:GetWidth()] = true
+
+			for _, name in ipairs({ "CountsBlock", "RoundBlock", "DampeningBlock" }) do
+				if not env.Addon.Display[name].Frame:IsShown() then
+					hiddenRows[name] = true
+				end
+			end
 		end
 
-		local distinct = 0
-
-		for _ in pairs(widths) do
-			distinct = distinct + 1
-		end
-
-		fw.eq(distinct, 1, "the container reserves the round line even while the counts sample is showing")
+		fw.is_nil(next(hiddenRows), "no row drops out of the preview at any point")
 	end)
 end)
 
-fw.describe("MiniDampen - dampening tier preview", function()
+fw.describe("MiniDampen - preview dampening", function()
 	local env
 
 	fw.before_each(function()
 		env = Arena.Build()
 	end)
 
-	fw.it("sweeps the sample dampening value while unlocked, without a real match", function()
+	fw.it("holds the sample dampening at one fixed reading, with nothing animating", function()
 		_G.MiniDampenDB.Locked = false
 		env.Addon.Display:Refresh()
 
@@ -690,29 +532,11 @@ fw.describe("MiniDampen - dampening tier preview", function()
 
 		local second = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
 
-		fw.neq(first, second, "the sweep moves the sample value on its own, no ticks from a match needed")
+		fw.eq(first, "50%", "the sample reads a plain mid-range percent")
+		fw.eq(second, first, "and never moves on its own")
 	end)
 
-	fw.it("never sweeps past 100%, the highest reading a real match shows", function()
-		_G.MiniDampenDB.Locked = false
-		env.Addon.Display:Refresh()
-
-		local highest = 0
-
-		-- A full sweep period, so both the rise and the fall are sampled.
-		for _ = 1, 20 do
-			env.Tick(1)
-
-			local reading = tonumber(StripColor(env.Addon.Display.DampeningBlock.Value:GetText()):match("(%d+)%%"))
-
-			fw.truthy(reading <= 100, "sample reading " .. reading .. " stayed within the real range")
-			highest = math.max(highest, reading)
-		end
-
-		fw.eq(highest, 100, "the sweep still reaches the top colour stop")
-	end)
-
-	fw.it("creates exactly one ticker for the sweep, not a fresh one on every Refresh", function()
+	fw.it("creates exactly one preview ticker, not a fresh one on every Refresh", function()
 		_G.MiniDampenDB.Locked = false
 		env.Addon.Display:Refresh()
 		env.Addon.Display:Refresh()
@@ -726,10 +550,10 @@ fw.describe("MiniDampen - dampening tier preview", function()
 			end
 		end
 
-		fw.eq(live, 1, "one live ticker driving the sweep")
+		fw.eq(live, 1, "one live ticker driving the preview")
 	end)
 
-	fw.it("cancels the sweep ticker on locking again", function()
+	fw.it("cancels the preview ticker on locking again", function()
 		_G.MiniDampenDB.Locked = false
 		env.Addon.Display:Refresh()
 
@@ -739,7 +563,7 @@ fw.describe("MiniDampen - dampening tier preview", function()
 		fw.truthy(env.Tickers[1].Ticker:IsCancelled(), "ticker cancelled once locked")
 	end)
 
-	fw.it("forces a bracketed value that overrides the sample sweep", function()
+	fw.it("forces a bracketed value that overrides the sample reading", function()
 		_G.MiniDampenDB.Locked = false
 		env.Addon.Display:Refresh()
 
@@ -749,8 +573,8 @@ fw.describe("MiniDampen - dampening tier preview", function()
 
 		local forced = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
 
-		fw.falsy(unforced:find("[", 1, true), "the sweep's own reading isn't bracketed")
-		fw.eq(forced, "[42%]", "bracket-marked, replacing the sweep's own reading")
+		fw.falsy(unforced:find("[", 1, true), "the sample's own reading isn't bracketed")
+		fw.eq(forced, "[42%]", "bracket-marked, replacing the sample's own reading")
 
 		env.Addon.Display:SetForcedDampening(nil)
 	end)
@@ -856,7 +680,6 @@ fw.describe("MiniDampen - solo shuffle before the first round", function()
 
 	fw.it("draws the counts row rather than the record row when roundIndex is still nil", function()
 		env.Enter()
-		env.Addon.Display:SetStyle("Numbers")
 		env.Addon.Display:Refresh()
 
 		fw.is_nil(env.Addon.MatchState.State.roundIndex, "no StartUp observed yet")
