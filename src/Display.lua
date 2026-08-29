@@ -42,18 +42,18 @@ local SAMPLE_STATE = {
 	},
 	enemy = {
 		{ Alive = true, Hidden = false },
-		{ Alive = true, Hidden = true },
-		{ Alive = false, Hidden = false },
+		{ Alive = true, Hidden = false },
+		{ Alive = true, Hidden = false },
 	},
 	dampening = 10,
 	roundIndex = nil,
 	roundResults = {},
 }
--- A full up-and-down cycle of the unlocked dampening sweep, ranging past the 100 stop so the
--- clamped top tier is visible too, not just the four named stops below it.
+-- A full up-and-down cycle of the unlocked dampening sweep, topping out at the last colour
+-- stop, which is the highest reading a match ever shows.
 local SWEEP_PERIOD = 20
 local SWEEP_MIN = 0
-local SWEEP_MAX = 130
+local SWEEP_MAX = 100
 local UNLOCKED_REFRESH_INTERVAL = 0.2
 -- Distinct from every dampening tier colour, so the border never reads as part of the reading
 -- it is warning about.

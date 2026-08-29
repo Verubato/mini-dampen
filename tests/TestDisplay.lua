@@ -541,6 +541,13 @@ fw.describe("MiniDampen - preview affordance", function()
 		fw.truthy(env.Addon.Display.CountsBlock.Frame:IsShown(), "sample content visible outside an arena")
 		fw.eq(env.Addon.Display.Container.Frame:IsMovable(), true, "still draggable with no match running")
 	end)
+
+	fw.it("previews both teams at full strength, with no ? and nobody dead", function()
+		_G.MiniDampenDB.Locked = false
+		env.Addon.Display:Refresh()
+
+		fw.eq(StripColor(env.Addon.Display.CountsBlock.Value:GetText()), "3 vs 3", "sample counts read full strength on both sides")
+	end)
 end)
 
 fw.describe("MiniDampen - dampening tier preview", function()
@@ -561,6 +568,25 @@ fw.describe("MiniDampen - dampening tier preview", function()
 		local second = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
 
 		fw.neq(first, second, "the sweep moves the sample value on its own, no ticks from a match needed")
+	end)
+
+	fw.it("never sweeps past 100%, the highest reading a real match shows", function()
+		_G.MiniDampenDB.Locked = false
+		env.Addon.Display:Refresh()
+
+		local highest = 0
+
+		-- A full sweep period, so both the rise and the fall are sampled.
+		for _ = 1, 20 do
+			env.Tick(1)
+
+			local reading = tonumber(StripColor(env.Addon.Display.DampeningBlock.Value:GetText()):match("(%d+)%%"))
+
+			fw.truthy(reading <= 100, "sample reading " .. reading .. " stayed within the real range")
+			highest = math.max(highest, reading)
+		end
+
+		fw.eq(highest, 100, "the sweep still reaches the top colour stop")
 	end)
 
 	fw.it("creates exactly one ticker for the sweep, not a fresh one on every Refresh", function()
