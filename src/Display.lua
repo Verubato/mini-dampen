@@ -16,7 +16,7 @@ local MAX_ROUNDS = 6
 -- Arena teams cap at 3, so the counts row never needs more than this many pips a side.
 local MAX_TEAM_SIZE = 3
 local LIGHTS = "Lights"
-local COUNTS_LEGEND = "Us vs Opponent"
+-- Only the round record needs a legend; "(2)-4/6" does not read on its own the way "3 vs 3" does.
 local ROUNDS_LEGEND = "Rounds"
 local DAMPENING_LEGEND = "Dampening"
 -- Widest text each row can produce, measured but never drawn, so the block width never jitters
@@ -123,7 +123,7 @@ end
 local function SetPipForEntry(pip, entry)
 	if not entry.Alive then
 		SetPip(pip, PIP_BACKING_SIZE, 10, 2, Colors.LIGHT_DEAD)
-	elseif entry.Cleared or entry.Hidden then
+	elseif entry.Cleared or entry.Hidden or entry.DeathSecret then
 		SetPip(pip, PIP_BACKING_SIZE, 4, 4, Colors.COUNT_HIDDEN)
 	else
 		SetPip(pip, PIP_BACKING_SIZE, 10, 10, Colors.LIGHT_WON)
@@ -214,9 +214,9 @@ local function CountsValueText(effState)
 			allyAlive = allyAlive + 1
 		end
 
-		-- A latched death is a known fact, not an uncertainty. Only mark ? when clearing is
-		-- the only reason this entry's fate is unknown.
-		if entry.Cleared and not entry.EverDead then
+		-- A latched death is a known fact. Only mark ? when clearing is the only reason this
+		-- entry's fate is unknown, or when a death read has actually come back secret.
+		if entry.DeathSecret or (entry.Cleared and not entry.EverDead) then
 			allyHidden = true
 		end
 	end
@@ -226,7 +226,7 @@ local function CountsValueText(effState)
 			enemyAlive = enemyAlive + 1
 		end
 
-		if (entry.Cleared or entry.Hidden) and not entry.EverDead then
+		if entry.DeathSecret or ((entry.Cleared or entry.Hidden) and not entry.EverDead) then
 			enemyHidden = true
 		end
 	end
@@ -321,7 +321,9 @@ end
 local function RenderCountsBlock(effState, lights)
 	local mode = CountsMode(effState)
 
-	countsBlock.Legend:SetText(mode == "rounds" and ROUNDS_LEGEND or COUNTS_LEGEND)
+	-- The legend column itself still exists, sized by ApplySharedWidth, so the value stays in
+	-- the same column both rows share.
+	countsBlock.Legend:SetText(mode == "rounds" and ROUNDS_LEGEND or "")
 
 	if lights then
 		if mode == "rounds" then
@@ -518,7 +520,9 @@ function M:Refresh()
 
 	-- Measured ahead of the content below, so the two placeholder reads land here rather than
 	-- clobbering whatever content width Render*Block just measured into the same scratch string.
-	local legendWidth = math.max(MeasureWidth(countsBlock, COUNTS_LEGEND), MeasureWidth(dampeningBlock, DAMPENING_LEGEND))
+	-- ROUNDS_LEGEND stands in for the counts row's own blank legend: whichever of the two is
+	-- wider still sets the shared legend column, so the value in both rows stays aligned.
+	local legendWidth = math.max(MeasureWidth(countsBlock, ROUNDS_LEGEND), MeasureWidth(dampeningBlock, DAMPENING_LEGEND))
 	local countsContentWidth, dampeningContentWidth = 0, 0
 
 	if showCounts then

@@ -67,7 +67,7 @@ a right value.
 Numbers:
 
 ```
-  Us vs Opponent      3 vs 3
+                       3 vs 3
   Dampening              10%
 ```
 
@@ -94,7 +94,7 @@ dampening percentage, and your solo shuffle round record in arena."
 | Show counts | checkbox | on | Draws the alive-count block, or the round record in solo shuffle. |
 | Show dampening | checkbox | on | Draws the dampening block. |
 | Hide Blizzard widgets | checkbox | on | Dims Blizzard's own top-center arena widgets while in scope. |
-| Display style | dropdown | Numbers | Numbers or Lights. |
+| Style | dropdown | Numbers | Numbers or Lights. |
 | Font size | slider | 16 | 10-24, applies to both blocks. |
 
 There is no reset-to-defaults button; settings live in MiniDampenDB.

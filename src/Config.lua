@@ -121,19 +121,19 @@ function M:Init()
 
 	local styleDivider = mini:Divider({
 		Parent = panel,
-		Text = "Style",
+		Text = "Appearance",
 	})
 
 	styleDivider:SetPoint("TOP", hideWidgetsChk, "BOTTOM", 0, -verticalSpacing)
 	styleDivider:SetPoint("LEFT", panel, "LEFT")
 	styleDivider:SetPoint("RIGHT", panel, "RIGHT", -horizontalSpacing, 0)
 
-	-- Spans both checkbox columns since Width includes the inline label, and "Display style"
-	-- alone is wider than a single column, truncating to "Nu..." otherwise.
+	-- One column. The label is kept short because Dropdown subtracts it from Width, and a long
+	-- one squeezes the box itself.
 	local styleDdl = mini:Dropdown({
 		Parent = panel,
-		Width = columnStep * columns - horizontalSpacing,
-		LabelText = "Display style",
+		Width = columnStep,
+		LabelText = "Style",
 		Tooltip = "Numbers shows counts and percentages. Lights replaces them with shape-coded pips.",
 		Items = { "Numbers", "Lights" },
 		GetValue = function()
@@ -147,12 +147,13 @@ function M:Init()
 
 	styleDdl.Label:SetPoint("TOPLEFT", styleDivider, "BOTTOMLEFT", 0, -verticalSpacing * 2)
 
+	-- Full width, so the slider has enough travel to land on a value precisely.
 	local fontSizeSlider = mini:Slider({
 		Parent = panel,
 		Min = 10,
 		Max = 24,
 		Step = 1,
-		Width = 160,
+		Width = columnStep * columns - horizontalSpacing,
 		LabelText = "Font size",
 		GetValue = function()
 			return db.FontSize
@@ -164,8 +165,8 @@ function M:Init()
 	})
 
 	-- Anchored to the dropdown's label, not the control, since LabelText offsets the control to
-	-- the label's right and anchoring to the control would drift "Font size" off Display
-	-- style's left edge.
+	-- the label's right and anchoring to the control would drift "Font size" off Style's left
+	-- edge.
 	fontSizeSlider.Slider:SetPoint("TOPLEFT", styleDdl.Label, "BOTTOMLEFT", 0, -verticalSpacing * 3)
 
 	panel:HookScript("OnShow", function()

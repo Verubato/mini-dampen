@@ -49,11 +49,16 @@ local function Notify()
 	end
 end
 
+---A secret read leaves Alive untouched rather than assuming dead, since inventing a kill is
+---the worst failure this addon can have. DeathSecret is re-derived from this same read every
+---call, the way Cleared is from UnitExists, so a later readable poll clears it again too.
 local function ReadDeaths(entries)
 	for _, entry in ipairs(entries) do
 		local dead = UnitIsDeadOrGhost(entry.Token)
 
-		if not mini:IsSecret(dead) then
+		entry.DeathSecret = mini:IsSecret(dead)
+
+		if not entry.DeathSecret then
 			entry.Alive = dead ~= true
 			entry.EverDead = entry.EverDead or dead == true
 		end
@@ -115,20 +120,29 @@ local function ArenaTeamSize()
 	return math.min(specs, MAX_TEAM_SIZE)
 end
 
-local function BuildAlly(teamSize)
-	local entries = {}
-
+---Grows state.ally in place, the same way ResizeEnemy grows the enemy array, so a token that
+---only resolves once teamSize catches up is not lost for the rest of the match. teamSize reads
+---0 at OpenScope whenever opponents haven't spawned yet.
+local function GrowAlly(size)
 	for _, token in ipairs(ALLY_TOKENS) do
-		if #entries >= teamSize then
+		if #state.ally >= size then
 			break
 		end
 
-		if UnitExists(token) then
-			entries[#entries + 1] = { Token = token, Alive = true, Hidden = false, UnseenSince = nil, EverDead = false, Cleared = false }
+		local tracked = false
+
+		for _, entry in ipairs(state.ally) do
+			if entry.Token == token then
+				tracked = true
+				break
+			end
+		end
+
+		if not tracked and UnitExists(token) then
+			state.ally[#state.ally + 1] =
+				{ Token = token, Alive = true, Hidden = false, UnseenSince = nil, EverDead = false, Cleared = false, DeathSecret = false }
 		end
 	end
-
-	return entries
 end
 
 ---Grows state.enemy in place rather than replacing it, so an entry a token update already
@@ -142,6 +156,7 @@ local function ResizeEnemy(size)
 			UnseenSince = nil,
 			EverDead = false,
 			Cleared = false,
+			DeathSecret = false,
 		}
 	end
 
@@ -151,7 +166,9 @@ local function ResizeEnemy(size)
 end
 
 ---Re-derived on every roster event, not just OpenScope, so a token not yet seen when the scope
----opened, a mid-match reload or a late spawn, is not lost for the rest of the match.
+---opened, a mid-match reload or a late spawn, is not lost for the rest of the match. Ally growth
+---runs every call, not only when teamSize itself changes, since teamSize can already be at its
+---final value while UnitExists("player") only starts answering true a moment later.
 local function RefreshTeamSize()
 	teamSizeSeen = math.max(teamSizeSeen, ArenaTeamSize())
 
@@ -159,6 +176,8 @@ local function RefreshTeamSize()
 		state.teamSize = teamSizeSeen
 		ResizeEnemy(teamSizeSeen)
 	end
+
+	GrowAlly(teamSizeSeen)
 end
 
 local function CurrentMatchKey()
@@ -348,33 +367,14 @@ local function OnMatchStateChanged()
 	Notify()
 end
 
----Fills in a party member who was still loading when the match opened. A tracked ally whose
----token stops resolving is marked cleared rather than dropped, the same as a departed
----opponent, so teamSize remains the ally denominator too.
+---Fills in a party member who was still loading when the match opened, via RefreshTeamSize's
+---own GrowAlly call. A tracked ally whose token stops resolving is marked cleared rather than
+---dropped, the same as a departed opponent, so teamSize remains the ally denominator too.
 local function OnGroupRosterUpdate()
 	RefreshTeamSize()
 
 	for _, entry in ipairs(state.ally) do
 		entry.Cleared = not UnitExists(entry.Token)
-	end
-
-	for _, token in ipairs(ALLY_TOKENS) do
-		if #state.ally >= state.teamSize then
-			break
-		end
-
-		local tracked = false
-
-		for _, entry in ipairs(state.ally) do
-			if entry.Token == token then
-				tracked = true
-				break
-			end
-		end
-
-		if not tracked and UnitExists(token) then
-			state.ally[#state.ally + 1] = { Token = token, Alive = true, Hidden = false, UnseenSince = nil, EverDead = false, Cleared = false }
-		end
 	end
 
 	Notify()
@@ -421,9 +421,9 @@ local function OpenScope()
 	state.isSoloShuffle = (C_PvP.IsSoloShuffle and C_PvP.IsSoloShuffle()) or false
 	teamSizeSeen = 0
 	state.teamSize = 0
+	state.ally = {}
 	state.enemy = {}
 	RefreshTeamSize()
-	state.ally = BuildAlly(state.teamSize)
 	state.dampening = nil
 	lastMatchState = C_PvP.GetActiveMatchState()
 
@@ -464,6 +464,16 @@ local function CloseScope()
 	Notify()
 end
 
+---Every /minidampen debug field is funnelled through here, so a value that turns out secret
+---can never be interpolated straight into the chat line that is meant to be diagnosing it.
+local function SafeString(value)
+	if mini:IsSecret(value) then
+		return "secret"
+	end
+
+	return tostring(value)
+end
+
 ---In scope for as long as a match is running: not Inactive before it starts, not Complete
 ---once the results screen is up.
 local function EvaluateGate()
@@ -499,10 +509,10 @@ function M:Debug()
 
 	lines[#lines + 1] = string.format(
 		"inScope=%s locked=%s instanceType=%s matchState=%s",
-		tostring(state.inScope),
-		tostring(db.Locked),
-		tostring(instanceType),
-		tostring(matchState)
+		SafeString(state.inScope),
+		SafeString(db.Locked),
+		SafeString(instanceType),
+		SafeString(matchState)
 	)
 
 	local source
@@ -518,12 +528,12 @@ function M:Debug()
 	lines[#lines + 1] = string.format("onScreenValues=%s", source)
 
 	lines[#lines + 1] = string.format(
-		"teamSize=%d allyCount=%d enemyCount=%d GetNumArenaOpponents=%s GetNumArenaOpponentSpecs=%s",
-		state.teamSize,
-		#state.ally,
-		#state.enemy,
-		tostring(opponents),
-		tostring(specs)
+		"teamSize=%s allyCount=%s enemyCount=%s GetNumArenaOpponents=%s GetNumArenaOpponentSpecs=%s",
+		SafeString(state.teamSize),
+		SafeString(#state.ally),
+		SafeString(#state.enemy),
+		SafeString(opponents),
+		SafeString(specs)
 	)
 
 	-- Mirrors ReadDampening's own guard order, so a secret aura or points table is never
@@ -531,8 +541,12 @@ function M:Debug()
 	local aura = C_UnitAuras.GetPlayerAuraBySpellID(DAMPENING_SPELL_ID)
 	local auraSecret = mini:IsSecret(aura)
 	local points, pointsSecret, rawValue, rawSecret
+	local auraFound
 
-	if not auraSecret then
+	if auraSecret then
+		auraFound = "secret"
+	else
+		auraFound = (aura ~= nil) and "yes" or "no"
 		points = aura and aura.points
 		pointsSecret = mini:IsSecret(points)
 
@@ -542,36 +556,41 @@ function M:Debug()
 		end
 	end
 
+	-- auraFound separates "no aura yet" from "aura unreadable", which displayed=nil alone
+	-- cannot: both a match with no dampening started and a restricted read land there.
 	lines[#lines + 1] = string.format(
-		"dampening displayed=%s auraSecret=%s pointsSecret=%s rawValue=%s rawSecret=%s",
-		tostring(state.dampening),
-		tostring(auraSecret),
-		tostring(pointsSecret),
-		rawSecret and "secret" or tostring(rawValue),
-		tostring(rawSecret)
+		"dampening displayed=%s auraFound=%s auraSecret=%s pointsSecret=%s rawValue=%s rawSecret=%s",
+		SafeString(state.dampening),
+		SafeString(auraFound),
+		SafeString(auraSecret),
+		SafeString(pointsSecret),
+		SafeString(rawValue),
+		SafeString(rawSecret)
 	)
 
-	lines[#lines + 1] = string.format("forcedDampening=%s", tostring(addon.Display:GetForcedDampening()))
+	lines[#lines + 1] = string.format("forcedDampening=%s", SafeString(addon.Display:GetForcedDampening()))
 
 	for _, entry in ipairs(state.ally) do
 		lines[#lines + 1] = string.format(
-			"ally %s alive=%s hidden=%s cleared=%s everDead=%s",
-			entry.Token,
-			tostring(entry.Alive),
-			tostring(entry.Hidden),
-			tostring(entry.Cleared),
-			tostring(entry.EverDead)
+			"ally %s alive=%s hidden=%s cleared=%s everDead=%s deathSecret=%s",
+			SafeString(entry.Token),
+			SafeString(entry.Alive),
+			SafeString(entry.Hidden),
+			SafeString(entry.Cleared),
+			SafeString(entry.EverDead),
+			SafeString(entry.DeathSecret)
 		)
 	end
 
 	for _, entry in ipairs(state.enemy) do
 		lines[#lines + 1] = string.format(
-			"enemy %s alive=%s hidden=%s cleared=%s everDead=%s",
-			entry.Token,
-			tostring(entry.Alive),
-			tostring(entry.Hidden),
-			tostring(entry.Cleared),
-			tostring(entry.EverDead)
+			"enemy %s alive=%s hidden=%s cleared=%s everDead=%s deathSecret=%s",
+			SafeString(entry.Token),
+			SafeString(entry.Alive),
+			SafeString(entry.Hidden),
+			SafeString(entry.Cleared),
+			SafeString(entry.EverDead),
+			SafeString(entry.DeathSecret)
 		)
 	end
 

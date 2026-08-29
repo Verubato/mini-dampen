@@ -587,6 +587,30 @@ fw.describe("MiniDampen - team size derivation", function()
 		fw.eq(#env.Addon.MatchState.State.enemy, 3, "enemy roster grew to match")
 	end)
 
+	fw.it("grows the ally roster, including the player, alongside teamSize, even though nothing enemy-side drives it", function()
+		-- Before GrowAlly ran on every RefreshTeamSize call, BuildAlly built the ally array once
+		-- at OpenScope with teamSize still 0 in the prep room, so the roster never grew again for
+		-- the rest of the match even once teamSize itself climbed from enemy-only events.
+		env.Specs = 0
+		env.Opponents = 0
+		env.Enter()
+
+		fw.eq(#env.Addon.MatchState.State.ally, 0, "nothing to grow into yet in the prep room")
+
+		env.Opponents = 1
+		env.Seen("arena1")
+
+		fw.eq(#env.Addon.MatchState.State.ally, 1, "ally roster grows in step with teamSize")
+		fw.eq(env.Addon.MatchState.State.ally[1].Token, "player", "the player is the first ally slot")
+
+		env.Opponents = 3
+		env.Seen("arena2")
+
+		fw.eq(#env.Addon.MatchState.State.ally, 3, "ally roster grew to match teamSize")
+		fw.eq(env.Addon.MatchState.State.ally[2].Token, "party1", "second slot is party1")
+		fw.eq(env.Addon.MatchState.State.ally[3].Token, "party2", "third slot is party2")
+	end)
+
 	fw.it("never shrinks the roster once a higher team size has been confirmed", function()
 		env.Specs = 3
 		env.Opponents = 3
@@ -653,6 +677,32 @@ fw.describe("MiniDampen - the ally roster", function()
 
 		fw.falsy(env.Addon.MatchState.State.ally[3].Cleared, "roster update reverses the clear")
 	end)
+
+	fw.it("sets DeathSecret rather than assuming a kill when an ally's death read comes back secret", function()
+		env.MarkDeathSecret("player")
+		env.Tick(0.5)
+
+		local entry = env.Addon.MatchState.State.ally[1]
+
+		-- Alive already defaults true at GrowAlly, so this alone would pass even without the
+		-- guard: the SECRET sentinel's dead ~= true never raises or resolves equal against a
+		-- plain boolean, so it happens to "fail open" by accident in this mock too. DeathSecret
+		-- has no such default, so it is the assertion that actually proves the guard ran.
+		fw.truthy(entry.Alive, "never assumes a kill from an unreadable read")
+		fw.truthy(entry.DeathSecret, "set so Debug() and the display can say this entry's fate is unreadable")
+	end)
+
+	fw.it("clears DeathSecret again once a later death read for the same ally comes back readable", function()
+		env.MarkDeathSecret("player")
+		env.Tick(0.5)
+
+		fw.truthy(env.Addon.MatchState.State.ally[1].DeathSecret, "secret on the first read")
+
+		env.SecretDeaths.player = false
+		env.Tick(0.5)
+
+		fw.falsy(env.Addon.MatchState.State.ally[1].DeathSecret, "cleared by the next readable poll, not left latched")
+	end)
 end)
 
 fw.describe("MiniDampen - Debug()", function()
@@ -697,6 +747,16 @@ fw.describe("MiniDampen - Debug()", function()
 		fw.truthy(hidden:find("hidden=true", 1, true) ~= nil, "arena2 reported hidden after the expiry delay")
 	end)
 
+	fw.it("flags an enemy's death read as secret in its Debug() line too, not just an ally's", function()
+		env.Enter()
+		env.MarkDeathSecret("arena1")
+		env.Tick(0.5)
+
+		local line = FindLine(env.Addon.MatchState:Debug(), "enemy arena1")
+
+		fw.truthy(line:find("deathSecret=true", 1, true) ~= nil, "enemy arena1's unreadable death read is surfaced")
+	end)
+
 	fw.it("reports a secret aura without reading through it", function()
 		env.Enter()
 		env.SetAuraSecret(true)
@@ -705,6 +765,36 @@ fw.describe("MiniDampen - Debug()", function()
 
 		fw.truthy(line:find("auraSecret=true", 1, true) ~= nil, "flags the aura itself as secret")
 		fw.truthy(line:find("rawValue=nil", 1, true) ~= nil, "never indexed into the secret aura for a raw value")
+		fw.truthy(line:find("auraFound=secret", 1, true) ~= nil, "can't even tell whether the aura is applied, distinct from finding none")
+	end)
+
+	fw.it("reports auraFound=no before dampening has ever been applied, distinct from an unreadable aura", function()
+		env.Enter()
+
+		local line = FindLine(env.Addon.MatchState:Debug(), "dampening ")
+
+		fw.truthy(line:find("auraFound=no", 1, true) ~= nil, "no aura yet is not the same reading as an unreadable one")
+	end)
+
+	fw.it("reports auraFound=yes once the dampening aura is actually applied", function()
+		env.Enter()
+		env.SetDampening(25)
+		env.Tick(0.5)
+
+		local line = FindLine(env.Addon.MatchState:Debug(), "dampening ")
+
+		fw.truthy(line:find("auraFound=yes", 1, true) ~= nil, "aura present and readable")
+	end)
+
+	fw.it("routes every Debug() field through SafeString, so a secret value is never interpolated raw", function()
+		env.Enter()
+		-- Bypasses the normal read path, which never stores a secret value in state, to prove
+		-- the formatting itself is safe regardless of how a secret got there.
+		env.Addon.MatchState.State.dampening = Arena.SECRET
+
+		local line = FindLine(env.Addon.MatchState:Debug(), "dampening displayed=")
+
+		fw.truthy(line:find("displayed=secret", 1, true) ~= nil, "rendered as \"secret\" rather than tostring'd or indexed")
 	end)
 
 	fw.it("tells a live reading from the unlocked sample preview", function()

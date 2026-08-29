@@ -82,6 +82,17 @@ fw.describe("MiniDampen - counts pips", function()
 		fw.eq(clearedFill:GetWidth(), 4, "cleared fill width, a dot")
 		fw.eq(clearedFill:GetHeight(), 4, "cleared fill height, a dot")
 	end)
+
+	fw.it("draws an opponent with a secret death read as a dot too, not a confident solid pip", function()
+		env.MarkDeathSecret("arena3")
+		env.Tick(2)
+
+		local pips = env.Addon.Display.CountsBlock.PipWidgets
+		local secretFill = pips[6].Fill
+
+		fw.eq(secretFill:GetWidth(), 4, "secret-death fill width, a dot")
+		fw.eq(secretFill:GetHeight(), 4, "secret-death fill height, a dot")
+	end)
 end)
 
 local function StripColor(text)
@@ -149,6 +160,42 @@ fw.describe("MiniDampen - counts value text", function()
 		local text = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
 
 		fw.eq(text, "3 vs 2", "a latched death needs no ?, unlike clearing before ever dying")
+	end)
+
+	fw.it("marks an ally with ? on a secret death read, without undercounting the alive tally", function()
+		env.MarkDeathSecret("player")
+		env.Tick(0.5)
+		env.Addon.Display:Refresh()
+
+		local text = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
+
+		fw.eq(text, "3? vs 3", "all three allies still counted alive, marked uncertain rather than assumed dead or dropped")
+	end)
+
+	fw.it("marks an opponent with ? on a secret death read too, not just an ally", function()
+		env.MarkDeathSecret("arena1")
+		env.Tick(0.5)
+		env.Addon.Display:Refresh()
+
+		local text = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
+
+		fw.eq(text, "3 vs 3?", "all three opponents still counted alive, marked uncertain rather than assumed dead or cleared")
+	end)
+
+	fw.it("clears the ? once a later death read for that ally comes back readable", function()
+		env.MarkDeathSecret("player")
+		env.Tick(0.5)
+		env.Addon.Display:Refresh()
+
+		fw.truthy(StripColor(env.Addon.Display.CountsBlock.Value:GetText()):find("?", 1, true) ~= nil, "starts marked uncertain")
+
+		env.SecretDeaths.player = false
+		env.Tick(0.5)
+		env.Addon.Display:Refresh()
+
+		local text = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
+
+		fw.eq(text, "3 vs 3", "the ? clears once the read is readable again, not left latched")
 	end)
 end)
 
@@ -305,18 +352,20 @@ fw.describe("MiniDampen - counts row layout", function()
 		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Legend, "pips anchored to the legend too")
 	end)
 
-	fw.it("keeps a fixed gap regardless of font size, not a fixed label column", function()
-		local leftover = {}
-
+	fw.it("sizes the legend column to fit \"Dampening\", not just the counts row's own blank legend, at either slider extreme", function()
 		for _, fontSize in ipairs({ 10, 24 }) do
 			_G.MiniDampenDB.FontSize = fontSize
 			env.Addon.Display:Refresh()
 
-			local block = env.Addon.Display.CountsBlock
-			leftover[fontSize] = block.Frame:GetWidth() - block.Legend:GetStringWidth() - block.Measure:GetStringWidth()
-		end
+			local block = env.Addon.Display.DampeningBlock
 
-		fw.eq(leftover[10], leftover[24], "the only non-text room in the block is a fixed gap that doesn't move with the font, at either slider extreme")
+			block.Measure:SetText("Dampening")
+
+			fw.truthy(
+				block.Legend:GetWidth() >= block.Measure:GetStringWidth(),
+				"legend column at font size " .. fontSize .. " is wide enough for \"Dampening\""
+			)
+		end
 	end)
 
 	fw.it("gives both blocks the same width, so their legends and values share one column", function()
@@ -327,6 +376,12 @@ fw.describe("MiniDampen - counts row layout", function()
 			env.Addon.Display.DampeningBlock.Frame:GetWidth(),
 			"both blocks share one width, not each sized to its own content"
 		)
+	end)
+
+	fw.it("draws no legend on the counts row", function()
+		env.Addon.Display:Refresh()
+
+		fw.eq(env.Addon.Display.CountsBlock.Legend:GetText(), "", "the \"Us vs Opponent\" label is gone")
 	end)
 end)
 
@@ -526,6 +581,6 @@ fw.describe("MiniDampen - solo shuffle before the first round", function()
 		env.Addon.Display:Refresh()
 
 		fw.is_nil(env.Addon.MatchState.State.roundIndex, "no StartUp observed yet")
-		fw.eq(env.Addon.Display.CountsBlock.Legend:GetText(), "Us vs Opponent", "falls back to the counts row")
+		fw.eq(env.Addon.Display.CountsBlock.Legend:GetText(), "", "falls back to the counts row, which carries no legend of its own")
 	end)
 end)
