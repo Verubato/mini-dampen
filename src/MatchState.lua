@@ -709,6 +709,7 @@ function M:Debug()
 	local specs = GetNumArenaOpponentSpecs and GetNumArenaOpponentSpecs()
 	local opponents = GetNumArenaOpponents and GetNumArenaOpponents()
 	local group = GetNumGroupMembers and GetNumGroupMembers()
+	local bracket = C_PvP.GetActiveMatchBracket and C_PvP.GetActiveMatchBracket()
 
 	lines[#lines + 1] = string.format(
 		"inScope=%s locked=%s instanceType=%s matchState=%s",
@@ -731,13 +732,14 @@ function M:Debug()
 	lines[#lines + 1] = string.format("onScreenValues=%s", source)
 
 	lines[#lines + 1] = string.format(
-		"teamSize=%s allyCount=%s enemyCount=%s GetNumArenaOpponents=%s GetNumArenaOpponentSpecs=%s GetNumGroupMembers=%s",
+		"teamSize=%s allyCount=%s enemyCount=%s GetNumArenaOpponents=%s GetNumArenaOpponentSpecs=%s GetNumGroupMembers=%s GetActiveMatchBracket=%s",
 		SafeString(state.teamSize),
 		SafeString(#state.ally),
 		SafeString(#state.enemy),
 		SafeString(opponents),
 		SafeString(specs),
-		SafeString(group)
+		SafeString(group),
+		SafeString(bracket)
 	)
 
 	-- Mirrors ReadDampening's own guard order, so a secret aura or points table is never
@@ -808,8 +810,17 @@ end
 function M:Probe()
 	local lines = {}
 	local _, instanceType = IsInInstance()
+	local bracket = C_PvP.GetActiveMatchBracket and C_PvP.GetActiveMatchBracket()
 
-	Append(lines, string.format("probe instanceType=%s inScope=%s", SafeString(instanceType), SafeString(state.inScope)))
+	Append(
+		lines,
+		string.format(
+			"probe instanceType=%s inScope=%s GetActiveMatchBracket=%s",
+			SafeString(instanceType),
+			SafeString(state.inScope),
+			SafeString(bracket)
+		)
+	)
 
 	for _, filter in ipairs(PROBE_FILTERS) do
 		AppendAuraLines(lines, filter)

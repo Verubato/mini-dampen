@@ -844,6 +844,24 @@ fw.describe("MiniDampen - Debug()", function()
 		fw.truthy(line:find("GetNumArenaOpponentSpecs=3", 1, true) ~= nil, "raw specs value present")
 	end)
 
+	fw.it("names the raw GetActiveMatchBracket value beside the other team-size sources", function()
+		env.Bracket = 4
+		env.Enter()
+
+		local line = FindLine(env.Addon.MatchState:Debug(), "teamSize=")
+
+		fw.truthy(line:find("GetActiveMatchBracket=4", 1, true) ~= nil, "raw bracket value present")
+	end)
+
+	fw.it("doesn't error when GetActiveMatchBracket is missing from the client", function()
+		env.Enter()
+		_G.C_PvP.GetActiveMatchBracket = nil
+
+		local line = FindLine(env.Addon.MatchState:Debug(), "teamSize=")
+
+		fw.truthy(line:find("GetActiveMatchBracket=nil", 1, true) ~= nil, "guarded call falls back to nil rather than erroring")
+	end)
+
 	fw.it("lists every tracked token with its alive, hidden, cleared, and everDead state", function()
 		env.Enter()
 		env.Kill("arena1")
