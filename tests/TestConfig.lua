@@ -9,6 +9,42 @@ local function StripColor(text)
 	return (text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
 end
 
+fw.describe("MiniDampen - slash command aliases", function()
+	fw.before_each(function()
+		Arena.Build()
+	end)
+
+	fw.it("registers every alias against the one handler", function()
+		local registered = {}
+
+		for i = 1, 8 do
+			local command = _G["SLASH_MINIDAMPEN" .. i]
+
+			if command then
+				registered[command] = true
+			end
+		end
+
+		fw.truthy(registered["/minidampen"], "the full name")
+		fw.truthy(registered["/mdampen"], "the medium alias")
+		fw.truthy(registered["/md"], "the short alias")
+	end)
+
+	fw.it("opens the settings panel on a bare command", function()
+		local opened = false
+		local previous = Settings.OpenToCategory
+
+		Settings.OpenToCategory = function()
+			opened = true
+		end
+
+		SlashCmdList.MINIDAMPEN("")
+		Settings.OpenToCategory = previous
+
+		fw.truthy(opened, "a bare /minidampen opens the options rather than printing usage")
+	end)
+end)
+
 fw.describe("MiniDampen - /minidampen debug", function()
 	local env
 

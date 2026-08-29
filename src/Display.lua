@@ -6,9 +6,10 @@ local Colors = addon.Colors
 local FONT_PATH = "Fonts\\FRIZQT__.TTF"
 local FONT_FLAGS = "OUTLINE"
 local BLOCK_HEIGHT = 20
--- Top-to-top distance between the two rows.
+-- Top-to-top distance between stacked rows.
 local ROW_GAP = 24
-local CONTAINER_HEIGHT_STACKED = ROW_GAP + BLOCK_HEIGHT
+-- The counts or round record, the solo shuffle round line, then dampening.
+local MAX_ROWS = 3
 -- Fixed gap after a legend, so nothing that follows it is ever crowded by a long label.
 local VALUE_GAP = 8
 local PIP_BACKING_SIZE = 12
@@ -19,13 +20,12 @@ local MAX_ROUNDS = 6
 -- Arena teams cap at 3, so the counts row never needs more than this many pips a side.
 local MAX_TEAM_SIZE = 3
 local LIGHTS = "Lights"
--- Only the round record needs a legend; "(2)-4/6" does not read on its own the way "3 vs 3" does.
-local ROUNDS_LEGEND = "Rounds"
 local DAMPENING_LEGEND = "Dampening"
 -- Widest text each row can produce, measured but never drawn, so the block width never jitters
 -- as the live value's character count changes tick to tick.
 local WIDEST_COUNTS_VALUE = "3? vs 3?"
-local WIDEST_ROUNDS_VALUE = "(6)-6/6"
+local WIDEST_ROUNDS_VALUE = "6W - 6L?"
+local WIDEST_ROUND_LINE = "Round 6/6"
 -- Reserves room for a three digit percent plus a forced value's brackets, both expected readings.
 local WIDEST_DAMPENING_VALUE = "[300%]"
 local COUNTS_PIPS_WIDTH = (MAX_TEAM_SIZE * 2 * PIP_BACKING_SIZE) + ((MAX_TEAM_SIZE * 2 - 1) * PIP_SPACING) + PIP_TEAM_GAP
@@ -76,7 +76,18 @@ local db
 local state
 local container
 local countsBlock
+local roundBlock
 local dampeningBlock
+-- Filled once in Init, so the font pass allocates nothing on a path that runs five times a
+-- second while unlocked.
+local allBlocks = {}
+-- Refilled every Refresh, for the same reason, out of a fixed set of row slots.
+local visibleRows = {}
+local rowSlots = {}
+
+for i = 1, MAX_ROWS do
+	rowSlots[i] = {}
+end
 -- Never restore an alpha this addon did not set itself.
 local didWeHide = false
 local preexistingAlpha
@@ -93,6 +104,7 @@ addon.Display = M
 -- Read by tests. Set once in Init and never replaced.
 M.Container = nil
 M.CountsBlock = nil
+M.RoundBlock = nil
 M.DampeningBlock = nil
 
 local function ColorText(text, color)
@@ -279,23 +291,34 @@ local function CountsValueText(effState)
 	return allyText .. " vs " .. enemyText
 end
 
+---A round that settled unknown is neither a win nor a loss, so a ? marks a tally that does
+---not add up yet.
 local function RoundsValueText(effState)
-	local wins = 0
-	local hasUnknown = false
+	local wins, losses, hasUnknown = 0, 0, false
 
 	for i = 1, MAX_ROUNDS do
 		local result = effState.roundResults[i]
 
 		if result == "win" then
 			wins = wins + 1
+		elseif result == "loss" then
+			losses = losses + 1
 		elseif result == "unknown" then
 			hasUnknown = true
 		end
 	end
 
-	local winsText = hasUnknown and "?" or tostring(wins)
+	local text = ColorText(wins .. "W", Colors.LIGHT_WON) .. " - " .. ColorText(losses .. "L", Colors.LIGHT_LOST)
 
-	return "(" .. ColorText(winsText, Colors.LIGHT_WON) .. ")-" .. (effState.roundIndex or 0) .. "/" .. MAX_ROUNDS
+	if hasUnknown then
+		text = text .. ColorText("?", Colors.COUNT_HIDDEN)
+	end
+
+	return text
+end
+
+local function RoundLineText(effState)
+	return "Round " .. (effState.roundIndex or 0) .. "/" .. MAX_ROUNDS
 end
 
 ---A forced value never wins once a real match is in scope, so a preview left running from
@@ -342,7 +365,6 @@ end
 
 local function RenderCountsBlock(effState, lights)
 	local mode = CountsMode(effState)
-	local legendText = mode == "rounds" and ROUNDS_LEGEND or ""
 
 	if lights then
 		local contentWidth
@@ -358,14 +380,14 @@ local function RenderCountsBlock(effState, lights)
 		-- A CENTER anchor needs a real width to centre around.
 		countsBlock.Pips:SetWidth(contentWidth)
 
-		return LayoutRow(countsBlock, legendText, countsBlock.Pips, contentWidth)
+		return LayoutRow(countsBlock, "", countsBlock.Pips, contentWidth)
 	end
 
 	countsBlock.Value:SetText(mode == "rounds" and RoundsValueText(effState) or CountsValueText(effState))
 
 	local widestValue = mode == "rounds" and WIDEST_ROUNDS_VALUE or WIDEST_COUNTS_VALUE
 
-	return LayoutRow(countsBlock, legendText, countsBlock.Value, MeasureWidth(countsBlock, widestValue))
+	return LayoutRow(countsBlock, "", countsBlock.Value, MeasureWidth(countsBlock, widestValue))
 end
 
 ---The widest the counts row gets in either mode. The unlocked preview alternates between the
@@ -374,7 +396,13 @@ local function PreviewCountsWidth(lights)
 	local counts = lights and COUNTS_PIPS_WIDTH or MeasureWidth(countsBlock, WIDEST_COUNTS_VALUE)
 	local rounds = lights and ROUND_PIPS_WIDTH or MeasureWidth(countsBlock, WIDEST_ROUNDS_VALUE)
 
-	return math.max(counts, MeasureWidth(countsBlock, ROUNDS_LEGEND) + VALUE_GAP + rounds)
+	return math.max(counts, rounds)
+end
+
+local function RenderRoundBlock(effState)
+	roundBlock.Value:SetText(RoundLineText(effState))
+
+	return LayoutRow(roundBlock, "", roundBlock.Value, MeasureWidth(roundBlock, WIDEST_ROUND_LINE))
 end
 
 -- Lights applies to the counts and round-record row only: MiniDampen's whole point is the
@@ -385,41 +413,49 @@ local function RenderDampeningBlock(value)
 	return LayoutRow(dampeningBlock, DAMPENING_LEGEND, dampeningBlock.Value, MeasureWidth(dampeningBlock, WIDEST_DAMPENING_VALUE))
 end
 
-local function LayoutContainer(showCounts, showDampening, countsWidth, dampeningWidth, unlocked)
-	countsBlock.Frame:ClearAllPoints()
-	countsBlock.Frame:SetPoint("TOP", container.Frame, "TOP", 0, 0)
+local function AddRow(block, width)
+	local index = #visibleRows + 1
+	local row = rowSlots[index]
 
-	dampeningBlock.Frame:ClearAllPoints()
+	row.Block = block
+	row.Width = width
+	visibleRows[index] = row
+end
 
-	if showCounts then
-		dampeningBlock.Frame:SetPoint("TOP", container.Frame, "TOP", 0, -ROW_GAP)
-	else
-		dampeningBlock.Frame:SetPoint("TOP", container.Frame, "TOP", 0, 0)
+local function ContainerHeight(rows)
+	return math.max(rows - 1, 0) * ROW_GAP + BLOCK_HEIGHT
+end
+
+---Stacks rows from the container's top down. reservedRows and reservedWidth are what the
+---container sizes itself to, which the preview holds above what is drawn right now.
+local function LayoutContainer(rows, reservedRows, reservedWidth, unlocked)
+	local width = math.max(reservedWidth, 1)
+
+	for i, row in ipairs(rows) do
+		row.Block.Frame:ClearAllPoints()
+		row.Block.Frame:SetPoint("TOP", container.Frame, "TOP", 0, -(i - 1) * ROW_GAP)
+
+		width = math.max(width, row.Width)
 	end
 
-	local stacked = showCounts and showDampening
-
-	container.Frame:SetHeight(stacked and CONTAINER_HEIGHT_STACKED or BLOCK_HEIGHT)
+	container.Frame:SetHeight(ContainerHeight(reservedRows))
 
 	-- The backdrop art bakes its height in when it is built, so the one matching the container's
 	-- current height is shown rather than resized.
-	container.OneRowBackdrop:SetShown(not stacked)
-	container.StackedBackdrop:SetShown(stacked)
+	for i = 1, MAX_ROWS do
+		container.Backdrops[i]:SetShown(i == reservedRows)
+	end
 
-	local width = math.max(showCounts and countsWidth or 0, showDampening and dampeningWidth or 0, 1)
-	local padding = unlocked and PREVIEW_PADDING or 0
-
-	container.Frame:SetWidth(width + padding)
-	container.Frame:SetShown(showCounts or showDampening)
+	container.Frame:SetWidth(width + (unlocked and PREVIEW_PADDING or 0))
+	container.Frame:SetShown(#rows > 0)
 end
 
 local function ApplyFonts()
-	countsBlock.Legend:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
-	countsBlock.Value:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
-	countsBlock.Measure:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
-	dampeningBlock.Legend:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
-	dampeningBlock.Value:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
-	dampeningBlock.Measure:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
+	for _, block in ipairs(allBlocks) do
+		block.Legend:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
+		block.Value:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
+		block.Measure:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
+	end
 end
 
 ---SetAlpha rather than Hide, because UIWidgetTopCenterContainerFrame's own visibility gate
@@ -502,7 +538,7 @@ local function BuildPreviewBackdrop(parent, containerHeight)
 	return box
 end
 
----Builds the single draggable frame the two rows sit on.
+---Builds the single draggable frame every row sits on.
 local function BuildContainer(frameName, anchorDb, defaultAnchor)
 	local frame = CreateFrame("Frame", frameName, UIParent)
 
@@ -513,8 +549,11 @@ local function BuildContainer(frameName, anchorDb, defaultAnchor)
 	-- BACKGROUND strata keeps it behind the rows' own text regardless of frame level.
 	previewFrame:SetFrameStrata("BACKGROUND")
 
-	local oneRowBackdrop = BuildPreviewBackdrop(previewFrame, BLOCK_HEIGHT)
-	local stackedBackdrop = BuildPreviewBackdrop(previewFrame, CONTAINER_HEIGHT_STACKED)
+	local backdrops = {}
+
+	for i = 1, MAX_ROWS do
+		backdrops[i] = BuildPreviewBackdrop(previewFrame, ContainerHeight(i))
+	end
 
 	local previewLabel = frame:CreateFontString(nil, "OVERLAY")
 	previewLabel:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 2)
@@ -529,8 +568,7 @@ local function BuildContainer(frameName, anchorDb, defaultAnchor)
 		Frame = frame,
 		PreviewFrame = previewFrame,
 		PreviewLabel = previewLabel,
-		OneRowBackdrop = oneRowBackdrop,
-		StackedBackdrop = stackedBackdrop,
+		Backdrops = backdrops,
 	}
 
 	-- Otherwise the container draws a PREVIEW caption at width 0 for the moment between Init
@@ -591,28 +629,43 @@ function M:Refresh()
 	-- diagnostic the user just asked for, not a reading that should outlive a real match starting.
 	local forcedActive = forcedDampening ~= nil and not state.inScope
 	local showDampening = db.ShowDampening and (forcedActive or (visible and dampeningValue ~= nil))
+	-- The round line rides the counts toggle, since it is the other half of the same reading.
+	local showRounds = showCounts and CountsMode(effState) == "rounds"
 
 	countsBlock.Frame:SetShown(showCounts)
+	roundBlock.Frame:SetShown(showRounds)
 	dampeningBlock.Frame:SetShown(showDampening)
 
 	mini:SetPositionLocked(container.Frame, db.Locked)
 	SetPreviewShown(container, unlocked)
 
-	local countsRowWidth, dampeningRowWidth = 0, 0
+	wipe(visibleRows)
 
 	if showCounts then
-		countsRowWidth = RenderCountsBlock(effState, lights)
+		local width = RenderCountsBlock(effState, lights)
 
-		if unlocked then
-			countsRowWidth = PreviewCountsWidth(lights)
-		end
+		AddRow(countsBlock, unlocked and PreviewCountsWidth(lights) or width)
+	end
+
+	if showRounds then
+		AddRow(roundBlock, RenderRoundBlock(effState))
 	end
 
 	if showDampening then
-		dampeningRowWidth = RenderDampeningBlock(dampeningValue)
+		AddRow(dampeningBlock, RenderDampeningBlock(dampeningValue))
 	end
 
-	LayoutContainer(showCounts, showDampening, countsRowWidth, dampeningRowWidth, unlocked)
+	-- The preview alternates between a two row and a three row layout, so while unlocked the
+	-- container holds every row the current settings can produce rather than what is drawn now.
+	local reservedRows = #visibleRows
+	local reservedWidth = 0
+
+	if unlocked then
+		reservedRows = (showCounts and 2 or 0) + (showDampening and 1 or 0)
+		reservedWidth = showCounts and MeasureWidth(roundBlock, WIDEST_ROUND_LINE) or 0
+	end
+
+	LayoutContainer(visibleRows, reservedRows, reservedWidth, unlocked)
 end
 
 function M:Init()
@@ -621,10 +674,16 @@ function M:Init()
 
 	container = BuildContainer(addonName .. "Frame", db.CountsAnchor, DEFAULT_COUNTS_ANCHOR)
 	countsBlock = BuildBlock(container.Frame, addonName .. "CountsFrame", true)
+	roundBlock = BuildBlock(container.Frame, addonName .. "RoundFrame", false)
 	dampeningBlock = BuildBlock(container.Frame, addonName .. "DampeningFrame", false)
+
+	allBlocks[1] = countsBlock
+	allBlocks[2] = roundBlock
+	allBlocks[3] = dampeningBlock
 
 	M.Container = container
 	M.CountsBlock = countsBlock
+	M.RoundBlock = roundBlock
 	M.DampeningBlock = dampeningBlock
 
 	self:SetStyle(db.DisplayStyle)

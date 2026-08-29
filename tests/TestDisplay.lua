@@ -1,6 +1,6 @@
 -- Display.lua never reads WoW APIs directly, so these drive it through tests/Helpers/Arena.lua
--- the same way TestMatchState.lua does, and read back the container and the two rows it built
--- in Init.
+-- the same way TestMatchState.lua does, and read back the container and the rows it built in
+-- Init.
 
 local fw = require("TestFramework")
 local Arena = require("Arena")
@@ -110,7 +110,10 @@ local VALUE_GAP = 8
 ---Where a row's content centre must land, given LayoutRow reserves legend + gap + content and
 ---centres the content in the last of those.
 local function ExpectedContentCentre(block)
-	return (block.Frame:GetWidth() + block.Legend:GetStringWidth() + VALUE_GAP) / 2
+	local legendWidth = block.Legend:GetStringWidth()
+	local gap = legendWidth > 0 and VALUE_GAP or 0
+
+	return (block.Frame:GetWidth() + legendWidth + gap) / 2
 end
 
 fw.describe("MiniDampen - counts value text", function()
@@ -226,7 +229,7 @@ fw.describe("MiniDampen - round record value text", function()
 		env.SetState(4) -- PostRound
 	end
 
-	fw.it("renders \"(2)-4/6\" with the win count in the won colour", function()
+	fw.it("renders wins against losses, the wins in the won colour and the losses in the lost one", function()
 		round(0) -- win
 		round(0) -- win
 		round(1) -- loss
@@ -235,8 +238,24 @@ fw.describe("MiniDampen - round record value text", function()
 
 		local text = env.Addon.Display.CountsBlock.Value:GetText()
 
-		fw.eq(StripColor(text), "(2)-4/6", "two wins of four rounds played, six total")
-		fw.truthy(text:find(ColorCode(env.Addon.Colors.LIGHT_WON), 1, true), "win count wrapped in the won colour")
+		fw.eq(StripColor(text), "2W - 2L", "two won and two lost, with no round fraction")
+		fw.truthy(text:find(ColorCode(env.Addon.Colors.LIGHT_WON) .. "2W", 1, true), "the wins wrapped in the won colour")
+		fw.truthy(text:find(ColorCode(env.Addon.Colors.LIGHT_LOST) .. "2L", 1, true), "the losses wrapped in the lost colour")
+	end)
+
+	fw.it("puts the current round on its own row below the record", function()
+		round(0)
+		env.SetState(2) -- StartUp, round two
+		env.SetState(3) -- Engaged
+		env.Addon.Display:Refresh()
+
+		fw.truthy(env.Addon.Display.RoundBlock.Frame:IsShown(), "the round row is drawn alongside the record")
+		fw.eq(StripColor(env.Addon.Display.RoundBlock.Value:GetText()), "Round 2/6", "reads the current round out of the six a shuffle always runs")
+
+		local _, _, _, _, recordY = env.Addon.Display.CountsBlock.Frame:GetPoint(1)
+		local _, _, _, _, roundY = env.Addon.Display.RoundBlock.Frame:GetPoint(1)
+
+		fw.truthy(roundY < recordY, "the round row sits below the record, not above it")
 	end)
 
 	fw.it("shows ? for the win count when a round settled unknown", function()
@@ -249,7 +268,7 @@ fw.describe("MiniDampen - round record value text", function()
 
 		local text = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
 
-		fw.truthy(text:find("?", 1, true), "win count reads ? rather than a wrong number")
+		fw.eq(text, "0W - 0L?", "the tally reads ? rather than a wrong number")
 	end)
 end)
 
@@ -383,7 +402,7 @@ fw.describe("MiniDampen - counts row layout", function()
 		fw.eq(x, env.Addon.Display.CountsBlock.Frame:GetWidth() / 2, "pips centred on the frame's own midpoint too")
 	end)
 
-	fw.it("centres the value within its own reserved slot, past the legend, in rounds mode", function()
+	fw.it("centres the value within its own reserved slot in rounds mode", function()
 		local roundsEnv = Arena.Build()
 		roundsEnv.SoloShuffle = true
 		roundsEnv.Enter()
@@ -396,7 +415,7 @@ fw.describe("MiniDampen - counts row layout", function()
 		fw.eq(point, "CENTER", "value's own anchor point")
 		fw.eq(relativeTo, roundsEnv.Addon.Display.CountsBlock.Frame, "measured from the row itself")
 		fw.eq(relativePoint, "LEFT", "off the row's own left edge")
-		fw.eq(x, ExpectedContentCentre(roundsEnv.Addon.Display.CountsBlock), "centred in the slot past the legend, not flush against it")
+		fw.eq(x, ExpectedContentCentre(roundsEnv.Addon.Display.CountsBlock), "centred in the slot reserved for the widest record, not flush left")
 	end)
 
 	fw.it("does not move the block's edge as the counts value's own width changes", function()
@@ -447,7 +466,8 @@ fw.describe("MiniDampen - container layout", function()
 	end)
 
 	fw.it("anchors both rows top-centre on the container", function()
-		env.Addon.Display:Refresh()
+		env.SetDampening(10)
+		env.Tick(0.5)
 
 		local cPoint, cRelativeTo, cRelativePoint, cx = env.Addon.Display.CountsBlock.Frame:GetPoint(1)
 
@@ -488,7 +508,8 @@ fw.describe("MiniDampen - container layout", function()
 
 	fw.it("hiding the counts row leaves the dampening row at the top with no gap", function()
 		_G.MiniDampenDB.ShowCounts = false
-		env.Addon.Display:Refresh()
+		env.SetDampening(10)
+		env.Tick(0.5)
 
 		local point, relativeTo, relativePoint, x, y = env.Addon.Display.DampeningBlock.Frame:GetPoint(1)
 
@@ -500,18 +521,45 @@ fw.describe("MiniDampen - container layout", function()
 		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 20, "container shrinks to the one visible row's height")
 	end)
 
+	fw.it("stacks the record, the round line, and dampening as three rows in solo shuffle", function()
+		local shuffle = Arena.Build()
+		shuffle.SoloShuffle = true
+		shuffle.Enter()
+		shuffle.SetState(2) -- StartUp
+		shuffle.SetState(3) -- Engaged, so the round line has a number to draw
+		shuffle.SetDampening(10)
+		shuffle.Tick(0.5)
+
+		local _, _, _, _, recordY = shuffle.Addon.Display.CountsBlock.Frame:GetPoint(1)
+		local _, _, _, _, roundY = shuffle.Addon.Display.RoundBlock.Frame:GetPoint(1)
+		local _, _, _, _, dampeningY = shuffle.Addon.Display.DampeningBlock.Frame:GetPoint(1)
+
+		fw.eq(recordY, 0, "the record sits at the container's top")
+		fw.eq(roundY, -24, "the round line one row down")
+		fw.eq(dampeningY, -48, "dampening below both")
+		fw.eq(shuffle.Addon.Display.Container.Frame:GetHeight(), 68, "three rows, two 24 gaps plus the last row's own 20")
+	end)
+
+	fw.it("leaves the round row out entirely outside solo shuffle", function()
+		env.SetDampening(10)
+		env.Tick(0.5)
+
+		fw.falsy(env.Addon.Display.RoundBlock.Frame:IsShown(), "no round line where there are no rounds")
+		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 44, "the container holds two rows, not three")
+	end)
+
 	fw.it("shows the backdrop built for the container's current height", function()
 		_G.MiniDampenDB.Locked = false
 		env.Addon.Display:Refresh()
 
-		fw.truthy(env.Addon.Display.Container.StackedBackdrop:IsShown(), "two rows get the taller backdrop")
-		fw.falsy(env.Addon.Display.Container.OneRowBackdrop:IsShown(), "the one-row backdrop stays hidden")
+		fw.truthy(env.Addon.Display.Container.Backdrops[3]:IsShown(), "the unlocked preview reserves all three rows, so it gets the tallest backdrop")
+		fw.falsy(env.Addon.Display.Container.Backdrops[1]:IsShown(), "the one-row backdrop stays hidden")
 
 		_G.MiniDampenDB.ShowCounts = false
 		env.Addon.Display:Refresh()
 
-		fw.truthy(env.Addon.Display.Container.OneRowBackdrop:IsShown(), "one row swaps to the shorter backdrop")
-		fw.falsy(env.Addon.Display.Container.StackedBackdrop:IsShown(), "the taller backdrop no longer overhangs the single row")
+		fw.truthy(env.Addon.Display.Container.Backdrops[1]:IsShown(), "one row swaps to the shorter backdrop")
+		fw.falsy(env.Addon.Display.Container.Backdrops[3]:IsShown(), "the taller backdrop no longer overhangs the single row")
 	end)
 end)
 
@@ -562,14 +610,16 @@ fw.describe("MiniDampen - preview affordance", function()
 		end
 
 		fw.truthy(seen["3 vs 3"], "the alive counts appear in the preview")
-		fw.truthy(seen["(2)-4/6"], "the solo shuffle round record appears in the preview, without needing a shuffle")
+		fw.truthy(seen["2W - 1L"], "the solo shuffle round record appears in the preview, without needing a shuffle")
 	end)
 
 	fw.it("holds one container width across the alternation, so it cannot resize mid-drag", function()
 		_G.MiniDampenDB.Locked = false
-		-- Lights, where the round pips plus their legend outgrow both the counts pips and the
-		-- dampening row.
+		-- Lights, where the round pips are the widest thing the counts row draws.
 		_G.MiniDampenDB.DisplayStyle = "Lights"
+		-- The dampening row is wider than either counts mode, so with it on the container never
+		-- tracks the swing under test at all.
+		_G.MiniDampenDB.ShowDampening = false
 		env.Addon.Display:Refresh()
 
 		local widths = {}
@@ -586,9 +636,40 @@ fw.describe("MiniDampen - preview affordance", function()
 		end
 
 		fw.eq(distinct, 1, "the container reserves the wider of the two modes rather than tracking whichever is showing")
-		-- The rounds row at font size 16: a 48 wide legend, VALUE_GAP, ROUND_PIPS_WIDTH, and the
-		-- unlocked PREVIEW_PADDING.
-		fw.truthy(widths[48 + 8 + 104 + 14], "reserved at the rounds row's own width, not some wider constant")
+		-- ROUND_PIPS_WIDTH, the wider of the two modes, plus the unlocked PREVIEW_PADDING.
+		fw.truthy(widths[104 + 14], "reserved at the rounds row's own width, not some wider constant")
+	end)
+end)
+
+fw.describe("MiniDampen - preview width in Numbers", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+	end)
+
+	fw.it("holds the round line's width too, which only joins the stack on the shuffle half", function()
+		_G.MiniDampenDB.Locked = false
+		-- Numbers with dampening off, the one setting where the round line is the widest row and
+		-- nothing else covers for it.
+		_G.MiniDampenDB.DisplayStyle = "Numbers"
+		_G.MiniDampenDB.ShowDampening = false
+		env.Addon.Display:Refresh()
+
+		local widths = {}
+
+		for _ = 1, 20 do
+			env.Tick(1)
+			widths[env.Addon.Display.Container.Frame:GetWidth()] = true
+		end
+
+		local distinct = 0
+
+		for _ in pairs(widths) do
+			distinct = distinct + 1
+		end
+
+		fw.eq(distinct, 1, "the container reserves the round line even while the counts sample is showing")
 	end)
 end)
 
@@ -779,6 +860,7 @@ fw.describe("MiniDampen - solo shuffle before the first round", function()
 		env.Addon.Display:Refresh()
 
 		fw.is_nil(env.Addon.MatchState.State.roundIndex, "no StartUp observed yet")
-		fw.eq(env.Addon.Display.CountsBlock.Legend:GetText(), "", "falls back to the counts row, which carries no legend of its own")
+		fw.eq(StripColor(env.Addon.Display.CountsBlock.Value:GetText()), "3 vs 3", "falls back to the alive counts, not an empty record")
+		fw.falsy(env.Addon.Display.RoundBlock.Frame:IsShown(), "and no round line, since there is no round yet")
 	end)
 end)

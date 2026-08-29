@@ -4,8 +4,8 @@
 
 Shows a team alive-count, the current dampening percentage, and (in solo shuffle) your
 round record, while you are in an arena. One draggable display, stacked top to bottom: a
-counts row (or the round record) above a dampening row. Each row is an optional legend and
-a value, centred as a unit.
+counts row (or the round record), a solo shuffle round line, then a dampening row. Each row
+is an optional legend and a value, centred as a unit.
 
 ## Facts
 
@@ -15,7 +15,7 @@ a value, centred as a unit.
 | Author | Verz |
 | Interface version (TOC) | 120100 (retail only) |
 | Saved variables | MiniDampenDB |
-| Slash commands | /minidampen, /mdampen (see Slash commands below) |
+| Slash commands | /minidampen, /mdampen, /md (see Slash commands below) |
 | Options location | Game options -> AddOns -> MiniDampen |
 | Bundled libraries | MiniFramework |
 
@@ -44,26 +44,27 @@ a value, centred as a unit.
 
 ### Positioning
 
-- Drag the display with the left mouse button to move it; the counts row and dampening row
-  move together and cannot be positioned separately. Unlock to show it everywhere with
+- Drag the display with the left mouse button to move it; every row moves together and none
+  can be positioned separately. Unlock to show it everywhere with
   sample data for positioning it outside a match.
 - The "Locked" option prevents dragging (and mouse interaction) on the display.
 - While unlocked, the counts row alternates every 10 seconds between the alive counts and a
   sample solo shuffle round record, so both can be previewed outside the match type that
   produces them. It holds the wider of the two widths so it cannot resize mid-drag.
-- The display sizes itself to whichever rows are currently visible: it shrinks to one row's
-  height when the other is hidden, rather than leaving a gap.
+- The display sizes itself to whichever rows are currently visible, so a hidden row leaves no
+  gap. While unlocked it instead reserves every row the current settings can produce, since
+  the alternating preview would otherwise change height mid-drag.
 
 ### Slash commands
 
-- `/minidampen`, `/mdampen`: opens the settings panel.
+- `/minidampen`, `/mdampen`, `/md`: opens the settings panel.
 - `/minidampen lock`, `/minidampen unlock`: the same toggle as the "Locked" checkbox.
 - `/minidampen dampening <percent>`: forces the dampening row to a bracket-marked value
   from 0 to 999, out of range clamped rather than rejected, until cleared. Ignored the
   moment a real match is in scope, so a forgotten preview can never be mistaken for what a
   live match is actually reading.
 - `/minidampen dampening clear`: clears a forced value.
-- `/minidampen debug`: prints every value the two rows are built from to chat, in or out
+- `/minidampen debug`: prints every value the rows are built from to chat, in or out
   of combat and in or out of an arena. See the Troubleshooting table below for when this is
   the right tool.
 
@@ -76,10 +77,13 @@ Numbers, each row centred independently on the display:
   Dampening  10%
 ```
 
-Solo shuffle swaps the top row for the round record:
+Solo shuffle swaps the top row for the round record, with the round number below it. The win
+count is drawn green and the loss count red. There is no round fraction, since a shuffle is
+always six rounds.
 
 ```
- Rounds  (2)-4/6
+  2W - 3L
+ Round 6/6
 Dampening  30%
 ```
 
@@ -96,11 +100,11 @@ dampening percentage, and your solo shuffle round record in arena."
 | --- | --- | --- | --- |
 | Enabled | checkbox | on | Master switch. Off means the gate never opens. |
 | Locked | checkbox | on | Unlock to preview the display with sample data and drag it. |
-| Show counts | checkbox | on | Draws the alive-count row, or the round record in solo shuffle. |
+| Show counts | checkbox | on | Draws the alive-count row, or the round record and round line in solo shuffle. |
 | Show dampening | checkbox | on | Draws the dampening row. |
 | Hide Blizzard widgets | checkbox | on | Dims Blizzard's own top-center arena widgets while in scope. |
 | Style | dropdown | Numbers | Numbers or Lights. |
-| Font size | slider | 16 | 10-24, applies to both rows. |
+| Font size | slider | 16 | 10-24, applies to every row. |
 
 There is no reset-to-defaults button; settings live in MiniDampenDB.
 
@@ -111,7 +115,7 @@ There is no reset-to-defaults button; settings live in MiniDampenDB.
 | Nothing shows in an arena | Check "Enabled". Unlock the frame briefly to confirm the rows exist and draw with sample data. |
 | Dampening row is missing entirely | The dampening aura was unreadable this session (absent, secret, or not a number); the row hides rather than showing a blank or a zero. |
 | Enemy alive count seems to skip an opponent | Either it has been continuously out of sight for 1.5 seconds, drawn hidden without changing the count, or it disconnected or left and Blizzard cleared its visibility override, drawn the same way but this time subtracted from the count and marked with `?` since it can no longer be confirmed alive. A departed ally is handled the same way. |
-| Round record shows a `?` for the win count | At least one settled round could not be determined (usually an opponent left before dying), so the total is unknown rather than wrong. |
+| Round record shows a trailing `?` | At least one settled round could not be determined (usually an opponent left before dying), so the total is unknown rather than wrong. |
 | Cannot move the display | "Locked" is checked. Unlock it first. |
 | Blizzard's own arena widgets are gone | Expected while "Hide Blizzard widgets" is on and you are in scope; they return to whatever alpha MiniDampen found them at on leaving, so they can come back dimmed if another addon had already dimmed them. |
 | Need to see the raw values behind any of the above | `/minidampen debug` prints them all to chat, including mid-fight where `/dump` itself is refused. See Slash commands above. |

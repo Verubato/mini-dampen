@@ -175,6 +175,7 @@ function M:Init()
 	mini:RegisterSlashCommand(category, panel, {
 		"/minidampen",
 		"/mdampen",
+		"/md",
 	})
 
 	local openPanel = SlashCmdList.MINIDAMPEN
