@@ -569,52 +569,42 @@ fw.describe("MiniDampen - dampening", function()
 		env.Enter()
 	end)
 
-	fw.it("reads a whole percent from points[1]", function()
+	fw.it("reads a whole percent from the commentator API", function()
 		env.SetDampening(30)
 		env.Tick(0.5)
 
-		fw.eq(env.Addon.MatchState.State.dampening, 30, "points[1] read straight through")
+		fw.eq(env.Addon.MatchState.State.dampening, 30, "GetDampeningPercent read straight through")
 	end)
 
-	fw.it("is nil when the aura is absent", function()
-		env.SetDampening(nil)
+	fw.it("displays a reading of 0 as 0, distinct from no reading at all", function()
+		env.SetDampening(0)
 		env.Tick(0.5)
 
-		fw.is_nil(env.Addon.MatchState.State.dampening, "no aura, no dampening")
+		fw.eq(env.Addon.MatchState.State.dampening, 0, "0 is a real reading before the display's own nil check")
 	end)
 
-	fw.it("is nil when the point value is secret", function()
+	fw.it("is nil when the reading is secret", function()
 		env.SetDampening(Arena.SECRET)
 		env.Tick(0.5)
 
-		fw.is_nil(env.Addon.MatchState.State.dampening, "a secret point value gives nil")
+		fw.is_nil(env.Addon.MatchState.State.dampening, "a secret reading gives nil")
 	end)
 
-	fw.it("does not error and stays nil when the whole aura is secret", function()
-		env.SetAuraSecret(true)
-
-		fw.no_error(function()
-			env.Tick(0.5)
-		end, "secret aura read")
-
-		fw.is_nil(env.Addon.MatchState.State.dampening, "a secret aura gives nil")
-	end)
-
-	fw.it("does not error and stays nil when the points field itself is secret", function()
-		env.SetPointsSecret(true)
-
-		fw.no_error(function()
-			env.Tick(0.5)
-		end, "secret points read")
-
-		fw.is_nil(env.Addon.MatchState.State.dampening, "secret points gives nil")
-	end)
-
-	fw.it("is nil when the point value is not a number", function()
+	fw.it("is nil when the reading is not a number", function()
 		env.SetDampening("30")
 		env.Tick(0.5)
 
-		fw.is_nil(env.Addon.MatchState.State.dampening, "a non-number point value gives nil")
+		fw.is_nil(env.Addon.MatchState.State.dampening, "a non-number reading gives nil")
+	end)
+
+	fw.it("does not error and stays nil when the commentator API is absent from the client", function()
+		env.RemoveCommentatorApi()
+
+		fw.no_error(function()
+			env.Tick(0.5)
+		end, "missing C_Commentator")
+
+		fw.is_nil(env.Addon.MatchState.State.dampening, "no API, nothing to display")
 	end)
 
 	fw.it("notifies on UNIT_AURA only when the dampening percent actually changes", function()
@@ -634,6 +624,30 @@ fw.describe("MiniDampen - dampening", function()
 		env.Context.Mock.FireEvent("UNIT_AURA", "player")
 
 		fw.eq(calls, 1, "notifies once the percent actually moves")
+	end)
+
+	fw.it("keeps the forced override reported through Debug() independent of a live reading", function()
+		env.SetDampening(45)
+		env.Tick(0.5)
+
+		env.Addon.Display:SetForcedDampening(70)
+
+		local lines = env.Addon.MatchState:Debug()
+		local dampeningLine
+		local forcedLine
+
+		for _, line in ipairs(lines) do
+			if line:find("dampening displayed=", 1, true) then
+				dampeningLine = line
+			elseif line:find("forcedDampening=", 1, true) then
+				forcedLine = line
+			end
+		end
+
+		fw.truthy(dampeningLine:find("displayed=45", 1, true) ~= nil, "the live reading still reaches state.dampening")
+		fw.truthy(forcedLine:find("forcedDampening=70", 1, true) ~= nil, "the forced override still reports, untouched by the live reading")
+
+		env.Addon.Display:SetForcedDampening(nil)
 	end)
 end)
 
@@ -937,33 +951,35 @@ fw.describe("MiniDampen - Debug()", function()
 		fw.truthy(line:find("deathSecret=true", 1, true) ~= nil, "enemy arena1's unreadable death read is surfaced")
 	end)
 
-	fw.it("reports a secret aura without reading through it", function()
+	fw.it("reports a secret commentator reading without reading through it", function()
 		env.Enter()
-		env.SetAuraSecret(true)
+		env.SetDampening(Arena.SECRET)
 
 		local line = FindLine(env.Addon.MatchState:Debug(), "dampening ")
 
-		fw.truthy(line:find("auraSecret=true", 1, true) ~= nil, "flags the aura itself as secret")
-		fw.truthy(line:find("rawValue=nil", 1, true) ~= nil, "never indexed into the secret aura for a raw value")
-		fw.truthy(line:find("auraFound=secret", 1, true) ~= nil, "can't even tell whether the aura is applied, distinct from finding none")
+		fw.truthy(line:find("rawSecret=true", 1, true) ~= nil, "flags the raw reading itself as secret")
+		fw.truthy(line:find("rawValue=secret", 1, true) ~= nil, "never interpolated the secret value raw")
+		fw.truthy(line:find("apiAvailable=true", 1, true) ~= nil, "the API itself is present, only the value is unreadable")
 	end)
 
-	fw.it("reports auraFound=no before dampening has ever been applied, distinct from an unreadable aura", function()
+	fw.it("reports apiAvailable=false when the commentator API is absent from the client", function()
 		env.Enter()
+		env.RemoveCommentatorApi()
 
 		local line = FindLine(env.Addon.MatchState:Debug(), "dampening ")
 
-		fw.truthy(line:find("auraFound=no", 1, true) ~= nil, "no aura yet is not the same reading as an unreadable one")
+		fw.truthy(line:find("apiAvailable=false", 1, true) ~= nil, "no API on this client")
+		fw.truthy(line:find("rawValue=nil", 1, true) ~= nil, "never called a function that isn't there")
 	end)
 
-	fw.it("reports auraFound=yes once the dampening aura is actually applied", function()
+	fw.it("reports the raw commentator value once a reading comes back", function()
 		env.Enter()
 		env.SetDampening(25)
-		env.Tick(0.5)
 
 		local line = FindLine(env.Addon.MatchState:Debug(), "dampening ")
 
-		fw.truthy(line:find("auraFound=yes", 1, true) ~= nil, "aura present and readable")
+		fw.truthy(line:find("rawValue=25", 1, true) ~= nil, "the raw reading is named")
+		fw.truthy(line:find("rawSecret=false", 1, true) ~= nil, "readable, not secret")
 	end)
 
 	fw.it("routes every Debug() field through SafeString, so a secret value is never interpolated raw", function()

@@ -100,22 +100,6 @@ local function InstallOverrides(env)
 		return rawequal(value, M.SECRET)
 	end
 
-	_G.C_UnitAuras.GetPlayerAuraBySpellID = function()
-		if env.AuraSecret then
-			return M.SECRET
-		end
-
-		if env.PointsSecret then
-			return { points = M.SECRET }
-		end
-
-		if env.Dampening == nil then
-			return nil
-		end
-
-		return { points = { env.Dampening } }
-	end
-
 	-- Slot numbers are the index into env.Auras[filter], so the probe's two-call enumeration
 	-- lands back on the same list the test authored.
 	_G.C_UnitAuras.GetAuraSlots = function(_, filter)
@@ -238,9 +222,6 @@ function M.Build()
 		Bracket = 1,
 		InstanceId = 1,
 		NextAuraSlot = 0,
-		Dampening = nil,
-		AuraSecret = false,
-		PointsSecret = false,
 		AuraSlotsRefuses = false,
 		Deaths = {},
 		SecretDeaths = {},
@@ -337,19 +318,15 @@ function M.Build()
 		env.Winner = faction
 	end
 
+	---Controls the live dampening reading, which comes from C_Commentator.GetDampeningPercent.
 	function env.SetDampening(value)
-		env.Dampening = value
+		env.CommentatorDampening = value
 	end
 
-	---Makes the next GetPlayerAuraBySpellID call return the aura table itself as secret.
-	function env.SetAuraSecret(value)
-		env.AuraSecret = value
-	end
-
-	---Makes the next GetPlayerAuraBySpellID call return an aura whose points field is secret,
-	---distinct from a secret points[1].
-	function env.SetPointsSecret(value)
-		env.PointsSecret = value
+	---The table is removed outright rather than left with a missing function, since
+	---ReadDampening's guard checks C_Commentator's own type first.
+	function env.RemoveCommentatorApi()
+		_G.C_Commentator = nil
 	end
 
 	---Simulates a /reload: fresh Lua state, saved variables preserved, everything else the

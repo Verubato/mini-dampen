@@ -3,7 +3,6 @@ local _, addon = ...
 local mini = addon.Framework
 local ALLY_TOKENS = { "player", "party1", "party2" }
 local ENEMY_TOKENS = { "arena1", "arena2", "arena3" }
-local DAMPENING_SPELL_ID = 110310
 local POLL_INTERVAL = 0.5
 -- How long an opponent has to stay unseen before the display treats it as hidden rather than
 -- flickering behind every pillar and line of sight break.
@@ -93,22 +92,15 @@ local function ExpireHidden(entries)
 	end
 end
 
+---Player auras are secret for the whole match, so dampening cannot come from spell 110310.
+---The commentator API answers a plain number for a normal player, not only a spectator.
 local function ReadDampening()
-	local aura = C_UnitAuras.GetPlayerAuraBySpellID(DAMPENING_SPELL_ID)
-
-	if mini:IsSecret(aura) then
+	if type(C_Commentator) ~= "table" or type(C_Commentator.GetDampeningPercent) ~= "function" then
 		state.dampening = nil
 		return
 	end
 
-	local points = aura and aura.points
-
-	if mini:IsSecret(points) then
-		state.dampening = nil
-		return
-	end
-
-	local value = points and points[1]
+	local value = C_Commentator.GetDampeningPercent()
 
 	if not mini:IsSecret(value) and type(value) == "number" then
 		state.dampening = math.floor(value + 0.5)
@@ -759,34 +751,20 @@ function M:Debug()
 		SafeString(group)
 	)
 
-	-- Mirrors ReadDampening's own guard order, so a secret aura or points table is never
-	-- indexed further here either.
-	local aura = C_UnitAuras.GetPlayerAuraBySpellID(DAMPENING_SPELL_ID)
-	local auraSecret = mini:IsSecret(aura)
-	local points, pointsSecret, rawValue, rawSecret
-	local auraFound
+	-- Mirrors ReadDampening's own guard order, so a secret reading is never indexed further
+	-- here either.
+	local apiAvailable = type(C_Commentator) == "table" and type(C_Commentator.GetDampeningPercent) == "function"
+	local rawValue, rawSecret
 
-	if auraSecret then
-		auraFound = "secret"
-	else
-		auraFound = (aura ~= nil) and "yes" or "no"
-		points = aura and aura.points
-		pointsSecret = mini:IsSecret(points)
-
-		if not pointsSecret then
-			rawValue = points and points[1]
-			rawSecret = mini:IsSecret(rawValue)
-		end
+	if apiAvailable then
+		rawValue = C_Commentator.GetDampeningPercent()
+		rawSecret = mini:IsSecret(rawValue)
 	end
 
-	-- auraFound separates "no aura yet" from "aura unreadable", which displayed=nil alone
-	-- cannot: both a match with no dampening started and a restricted read land there.
 	lines[#lines + 1] = string.format(
-		"dampening displayed=%s auraFound=%s auraSecret=%s pointsSecret=%s rawValue=%s rawSecret=%s",
+		"dampening displayed=%s apiAvailable=%s rawValue=%s rawSecret=%s",
 		SafeString(state.dampening),
-		SafeString(auraFound),
-		SafeString(auraSecret),
-		SafeString(pointsSecret),
+		SafeString(apiAvailable),
 		SafeString(rawValue),
 		SafeString(rawSecret)
 	)
