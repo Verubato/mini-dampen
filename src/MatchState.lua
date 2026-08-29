@@ -57,6 +57,7 @@ end
 ---A secret read leaves Alive untouched rather than assuming dead, since inventing a kill is
 ---the worst failure this addon can have. DeathSecret is re-derived from this same read every
 ---call, the way Cleared is from UnitExists, so a later readable poll clears it again too.
+---Nothing resurrects inside a round, so a unit that reads alive again was never really dead.
 local function ReadDeaths(entries)
 	for _, entry in ipairs(entries) do
 		local dead = UnitIsDeadOrGhost(entry.Token)
@@ -68,9 +69,16 @@ local function ReadDeaths(entries)
 		entry.DeathSecret = mini:IsSecret(dead)
 		entry.Feigning = feigning
 
-		if not entry.DeathSecret then
+		-- A token that stops resolving reads nil, not secret. That is not a reading either, so
+		-- Alive and EverDead both keep their last known value the same way a secret read does.
+		if not entry.DeathSecret and dead ~= nil then
 			entry.Alive = dead ~= true or feigning
-			entry.EverDead = entry.EverDead or (dead == true and not feigning)
+
+			if dead == true and not feigning then
+				entry.EverDead = true
+			elseif dead == false then
+				entry.EverDead = false
+			end
 		end
 	end
 end
@@ -278,10 +286,11 @@ local function OnArenaOpponentUpdate(token, reason)
 	elseif reason == "unseen" then
 		entry.UnseenSince = entry.UnseenSince or GetTime()
 	elseif reason == "destroyed" then
+		-- A kill latched here could never be walked back, since a destroyed token stops
+		-- resolving and every later poll reads nil. The poll owns EverDead instead.
 		entry.Cleared = false
 		entry.UnseenSince = nil
 		entry.Hidden = false
-		entry.EverDead = true
 		entry.Alive = false
 	end
 
@@ -709,7 +718,6 @@ function M:Debug()
 	local specs = GetNumArenaOpponentSpecs and GetNumArenaOpponentSpecs()
 	local opponents = GetNumArenaOpponents and GetNumArenaOpponents()
 	local group = GetNumGroupMembers and GetNumGroupMembers()
-	local bracket = C_PvP.GetActiveMatchBracket and C_PvP.GetActiveMatchBracket()
 
 	lines[#lines + 1] = string.format(
 		"inScope=%s locked=%s instanceType=%s matchState=%s",
@@ -732,14 +740,13 @@ function M:Debug()
 	lines[#lines + 1] = string.format("onScreenValues=%s", source)
 
 	lines[#lines + 1] = string.format(
-		"teamSize=%s allyCount=%s enemyCount=%s GetNumArenaOpponents=%s GetNumArenaOpponentSpecs=%s GetNumGroupMembers=%s GetActiveMatchBracket=%s",
+		"teamSize=%s allyCount=%s enemyCount=%s GetNumArenaOpponents=%s GetNumArenaOpponentSpecs=%s GetNumGroupMembers=%s",
 		SafeString(state.teamSize),
 		SafeString(#state.ally),
 		SafeString(#state.enemy),
 		SafeString(opponents),
 		SafeString(specs),
-		SafeString(group),
-		SafeString(bracket)
+		SafeString(group)
 	)
 
 	-- Mirrors ReadDampening's own guard order, so a secret aura or points table is never
@@ -810,15 +817,13 @@ end
 function M:Probe()
 	local lines = {}
 	local _, instanceType = IsInInstance()
-	local bracket = C_PvP.GetActiveMatchBracket and C_PvP.GetActiveMatchBracket()
 
 	Append(
 		lines,
 		string.format(
-			"probe instanceType=%s inScope=%s GetActiveMatchBracket=%s",
+			"probe instanceType=%s inScope=%s",
 			SafeString(instanceType),
-			SafeString(state.inScope),
-			SafeString(bracket)
+			SafeString(state.inScope)
 		)
 	)
 

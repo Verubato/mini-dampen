@@ -79,6 +79,11 @@ local function InstallOverrides(env)
 			return M.SECRET
 		end
 
+		-- A token that does not resolve answers nil rather than false, matching the real client.
+		if not env.Exists[unit] then
+			return nil
+		end
+
 		return env.Deaths[unit] == true
 	end
 

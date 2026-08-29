@@ -234,14 +234,64 @@ fw.describe("MiniDampen - visibility", function()
 		fw.falsy(entry.EverDead, "and never latches a kill")
 	end)
 
-	fw.it("marks a destroyed opponent dead immediately, even while its own death read stays secret", function()
+	fw.it("drops a destroyed opponent's Alive immediately, even while its own death read stays secret, but leaves EverDead to the poll", function()
 		env.MarkDeathSecret("arena3")
 		env.Destroyed("arena3")
 
 		local entry = env.Addon.MatchState.State.enemy[3]
 
 		fw.eq(entry.Alive, false, "destroyed sets Alive directly, not only through the poll")
-		fw.truthy(entry.EverDead, "also latches EverDead")
+		fw.falsy(entry.EverDead, "a confirmed kill can only come from the poll's own readable death read")
+	end)
+
+	fw.it("clears EverDead once a latched enemy reads alive again, with the feign API answering false throughout", function()
+		env.Kill("arena2")
+		env.Tick(0.5)
+
+		fw.truthy(env.Addon.MatchState.State.enemy[2].EverDead, "latched dead on the first readable death")
+
+		env.Deaths.arena2 = nil
+		env.Tick(0.5)
+
+		fw.falsy(env.Addon.MatchState.State.enemy[2].EverDead, "a readable alive reading reverses a latch that was never a real kill")
+	end)
+
+	fw.it("keeps EverDead latched when the token stops resolving afterward", function()
+		env.Kill("arena2")
+		env.Tick(0.5)
+
+		env.Exists.arena2 = false
+		env.Tick(0.5)
+
+		fw.truthy(env.Addon.MatchState.State.enemy[2].EverDead, "an unreadable nil reading can't clear the latch")
+	end)
+
+	fw.it("keeps EverDead latched when a later death read comes back secret, pinning the release to exactly dead == false rather than a loosened dead ~= true", function()
+		env.Kill("arena2")
+		env.Tick(0.5)
+
+		env.MarkDeathSecret("arena2")
+		env.Tick(0.5)
+
+		fw.truthy(env.Addon.MatchState.State.enemy[2].EverDead, "a secret reading can't clear the latch")
+	end)
+
+	fw.it("settles a round unknown, not a false win, when three enemies latch dead and then read alive again before PostRound", function()
+		env.SetState(2) -- StartUp
+		env.SetState(3) -- Engaged
+		env.SetWinner(nil)
+
+		env.Kill("arena1")
+		env.Kill("arena2")
+		env.Kill("arena3")
+		env.Tick(0.5)
+
+		env.Deaths = {}
+		env.Tick(0.5)
+
+		env.SetState(4) -- PostRound
+
+		fw.eq(env.Addon.MatchState.State.roundResults[1], "unknown", "three kills that turned out to be feigns must not settle as a win")
 	end)
 end)
 
@@ -345,6 +395,23 @@ fw.describe("MiniDampen - round settling", function()
 		env.SetState(3)
 
 		fw.eq(env.Addon.MatchState.State.enemy[1].EverDead, false, "round two starts clean")
+	end)
+
+	fw.it("guards SettleRound against recomputing a stored result when a latched-dead enemy reads alive again afterward", function()
+		startRound()
+		env.SetWinner(nil)
+		env.Kill("arena1")
+		env.Kill("arena2")
+		env.Kill("arena3")
+		env.Tick(0.5)
+		env.SetState(4) -- PostRound stores the corpse latch result
+
+		fw.eq(env.Addon.MatchState.State.roundResults[1], "win", "every enemy latched dead")
+
+		env.Deaths.arena1 = nil
+		env.Tick(0.5)
+
+		fw.eq(env.Addon.MatchState.State.roundResults[1], "win", "a later alive reading can't rewrite the stored result")
 	end)
 
 	fw.it("leaves roundIndex nil when entering already Engaged with nothing to adopt", function()
@@ -842,24 +909,6 @@ fw.describe("MiniDampen - Debug()", function()
 
 		fw.truthy(line:find("GetNumArenaOpponents=2", 1, true) ~= nil, "raw opponents value present")
 		fw.truthy(line:find("GetNumArenaOpponentSpecs=3", 1, true) ~= nil, "raw specs value present")
-	end)
-
-	fw.it("names the raw GetActiveMatchBracket value beside the other team-size sources", function()
-		env.Bracket = 4
-		env.Enter()
-
-		local line = FindLine(env.Addon.MatchState:Debug(), "teamSize=")
-
-		fw.truthy(line:find("GetActiveMatchBracket=4", 1, true) ~= nil, "raw bracket value present")
-	end)
-
-	fw.it("doesn't error when GetActiveMatchBracket is missing from the client", function()
-		env.Enter()
-		_G.C_PvP.GetActiveMatchBracket = nil
-
-		local line = FindLine(env.Addon.MatchState:Debug(), "teamSize=")
-
-		fw.truthy(line:find("GetActiveMatchBracket=nil", 1, true) ~= nil, "guarded call falls back to nil rather than erroring")
 	end)
 
 	fw.it("lists every tracked token with its alive, hidden, cleared, and everDead state", function()
