@@ -78,9 +78,10 @@ Each row is centred independently on the display:
   Dampening  10%
 ```
 
-Solo shuffle swaps the top row for the round record, with the round number below it. The win
-count is drawn green and the loss count red. There is no round fraction, since a shuffle is
-always six rounds.
+Solo shuffle swaps the top row for the round record, with the round line below it. The win
+count is drawn green, the loss count red. The round line's own `6/6` reads yellow, apart from
+its "Round" label. The record row carries no fraction of its own, since a shuffle is always
+six rounds and the win/loss count alone already says enough.
 
 ```
   2W - 3L
@@ -101,6 +102,8 @@ dampening percentage, and your solo shuffle round record in arena."
 | Show dampening | checkbox | on | Draws the dampening row. |
 | Hide Blizzard widgets | checkbox | on | Dims Blizzard's own top-center arena widgets while in scope. |
 | Font size | slider | 16 | 10-24, applies to every row. |
+| Font | dropdown | Game Default | The face every row draws in. Lists the client's own faces plus anything another addon has registered with LibSharedMedia-3.0. |
+| Outline | dropdown | Outline | None, Outline, or Thick outline. |
 
 There is no reset-to-defaults button; settings live in MiniDampenDB.
 

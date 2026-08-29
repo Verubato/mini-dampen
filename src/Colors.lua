@@ -15,6 +15,8 @@ local DAMPENING_STOPS = {
 }
 local ROUND_WON = COUNT_FULL
 local ROUND_LOST = { 0.85, 0.20, 0.20 }
+-- Set apart from the "Round" label beside it, so the number is what the eye lands on.
+local ROUND_NUMBER = COUNT_HURT
 ---@class Colors
 local M = {}
 addon.Colors = M
@@ -26,6 +28,7 @@ M.COUNT_WIPED = COUNT_WIPED
 M.COUNT_HIDDEN = COUNT_HIDDEN
 M.ROUND_WON = ROUND_WON
 M.ROUND_LOST = ROUND_LOST
+M.ROUND_NUMBER = ROUND_NUMBER
 
 local function Lerp(a, b, t)
 	return a + (b - a) * t

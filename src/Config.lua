@@ -11,11 +11,19 @@ local dbDefaults = {
 	HideBlizzardWidgets = true,
 	Locked = true,
 	FontSize = 16,
+	-- false means the game's own default face; a shared media font name string otherwise.
+	FontFace = false,
+	-- The look every existing user already has, so nothing moves under them.
+	FontOutline = "OUTLINE",
 	CountsAnchor = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -140 },
 }
 ---@class Config
 local M = {}
 addon.Config = M
+
+-- Read by tests. Set once in Init and never replaced.
+M.Panel = nil
+M.FontItems = nil
 
 function M:Init()
 	db = mini:GetSavedVars(dbDefaults)
@@ -144,6 +152,125 @@ function M:Init()
 	})
 
 	fontSizeSlider.Slider:SetPoint("TOPLEFT", appearanceDivider, "BOTTOMLEFT", 0, -verticalSpacing * 2)
+
+	local Fonts = addon.Fonts
+	-- Resolves to the same file as leaving FontFace unset.
+	local gameDefaultLabel = "Game Default"
+	local fontItems = {}
+
+	local function RebuildFontItems()
+		wipe(fontItems)
+
+		fontItems[1] = gameDefaultLabel
+
+		for _, name in ipairs(Fonts:Names()) do
+			fontItems[#fontItems + 1] = name
+		end
+	end
+
+	RebuildFontItems()
+
+	-- Catches whatever a media pack registers after Init, which runs off MiniDampen's own
+	-- ADDON_LOADED and so fires before any other addon's media pack has had a chance to.
+	panel:HookScript("OnShow", RebuildFontItems)
+
+	M.Panel = panel
+	M.FontItems = fontItems
+
+	local fontLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+	fontLabel:SetText("Font")
+	fontLabel:SetPoint("TOPLEFT", fontSizeSlider.Slider, "BOTTOMLEFT", 0, -verticalSpacing * 2)
+
+	local fontDropdown = mini:Dropdown({
+		Parent = panel,
+		Items = fontItems,
+		Tooltip = "The face every row draws in. A font registered by another addon is listed too.",
+		TooltipTitle = "Font",
+		Width = columnStep - horizontalSpacing,
+		GetValue = function()
+			return db.FontFace or gameDefaultLabel
+		end,
+		SetValue = function(value)
+			local name = value ~= gameDefaultLabel and value or false
+
+			if name == db.FontFace then
+				return
+			end
+
+			db.FontFace = name
+			addon:Refresh()
+		end,
+		-- Each row previews the font it names. Menu rows are pooled, so the stock face is
+		-- remembered the first time a row comes through here and put back on rows that
+		-- preview nothing: the Game Default row, and any font that resolves to nothing.
+		DecorateItem = function(button, value)
+			local text = button.fontString
+
+			if not text then
+				return
+			end
+
+			if button.MiniDampenStockFont == nil then
+				button.MiniDampenStockFont = text:GetFontObject() or false
+			end
+
+			local preview = value ~= gameDefaultLabel and Fonts:PreviewObject(value) or nil
+
+			if preview then
+				text:SetFontObject(preview)
+			elseif button.MiniDampenStockFont then
+				text:SetFontObject(button.MiniDampenStockFont)
+			end
+		end,
+	})
+
+	fontDropdown:SetPoint("TOPLEFT", fontLabel, "BOTTOMLEFT", 0, -4)
+
+	-- Media addons register their fonts whenever they happen to load, which is routinely after
+	-- this dropdown was built.
+	Fonts:OnChanged(function()
+		RebuildFontItems()
+
+		if fontDropdown.MiniRefresh then
+			fontDropdown:MiniRefresh()
+		end
+
+		-- A saved face the display could not resolve draws the default until the pack carrying it
+		-- arrives, so the rows need the same catch-up the list just had.
+		addon:Refresh()
+	end)
+
+	local outlineItems = { "NONE", "OUTLINE", "THICKOUTLINE" }
+	local outlineText = {
+		NONE = "None",
+		OUTLINE = "Outline",
+		THICKOUTLINE = "Thick outline",
+	}
+
+	local outlineLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+	outlineLabel:SetText("Outline")
+	outlineLabel:SetPoint("TOP", fontLabel, "TOP", 0, 0)
+	outlineLabel:SetPoint("LEFT", panel, "LEFT", columnStep, 0)
+
+	local outlineDropdown = mini:Dropdown({
+		Parent = panel,
+		Items = outlineItems,
+		Tooltip = "The text outline style every row draws with.",
+		TooltipTitle = "Outline",
+		Width = columnStep - horizontalSpacing,
+		GetText = function(value)
+			return outlineText[value]
+		end,
+		GetValue = function()
+			return Fonts:SanitizeOutline(db.FontOutline)
+		end,
+		SetValue = function(value)
+			db.FontOutline = value
+			addon:Refresh()
+		end,
+	})
+
+	outlineDropdown:SetPoint("TOPLEFT", outlineLabel, "BOTTOMLEFT", 0, -4)
 
 	mini:RegisterSlashCommand(category, panel, {
 		"/minidampen",

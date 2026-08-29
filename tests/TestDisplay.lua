@@ -158,6 +158,7 @@ fw.describe("MiniDampen - round record value text", function()
 
 		fw.truthy(env.Addon.Display.RoundBlock.Frame:IsShown(), "the round row is drawn alongside the record")
 		fw.eq(StripColor(env.Addon.Display.RoundBlock.Value:GetText()), "Round 2/6", "reads the current round out of the six a shuffle always runs")
+		fw.truthy(env.Addon.Display.RoundBlock.Value:GetText():find(ColorCode(env.Addon.Colors.ROUND_NUMBER) .. "2/6", 1, true), "with the fraction coloured apart from its label")
 
 		local _, _, _, _, recordY = env.Addon.Display.CountsBlock.Frame:GetPoint(1)
 		local _, _, _, _, roundY = env.Addon.Display.RoundBlock.Frame:GetPoint(1)

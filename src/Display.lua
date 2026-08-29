@@ -3,8 +3,7 @@ local addonName, addon = ...
 local mini = addon.Framework
 local GUI = mini.GUI
 local Colors = addon.Colors
-local FONT_PATH = "Fonts\\FRIZQT__.TTF"
-local FONT_FLAGS = "OUTLINE"
+local Fonts = addon.Fonts
 local BLOCK_HEIGHT = 20
 -- Top-to-top distance between stacked rows.
 local ROW_GAP = 24
@@ -57,6 +56,8 @@ local UNLOCKED_REFRESH_INTERVAL = 1
 local PREVIEW_BORDER = { r = 0.81, g = 0.66, b = 0.31 }
 local PREVIEW_FILL = { r = 0.12, g = 0.11, b = 0.10 }
 local PREVIEW_FILL_ALPHA = 0.55
+-- Below every row's own size, so the caption never competes with the rows it labels.
+local PREVIEW_LABEL_FONT_SIZE = 10
 -- Extra room the backdrop gets on both sides of the widest visible row, so the border never
 -- hugs the text edge to edge.
 local PREVIEW_PADDING = 14
@@ -199,7 +200,9 @@ local function RoundsValueText(effState)
 end
 
 local function RoundLineText(effState)
-	return "Round " .. (effState.roundIndex or 0) .. "/" .. MAX_ROUNDS
+	local fraction = (effState.roundIndex or 0) .. "/" .. MAX_ROUNDS
+
+	return "Round " .. ColorText(fraction, Colors.ROUND_NUMBER)
 end
 
 ---A forced value never wins once a real match is in scope, so a preview left running from
@@ -286,12 +289,36 @@ local function LayoutContainer(rows, unlocked)
 	container.Frame:SetShown(#rows > 0)
 end
 
-local function ApplyFonts()
-	for _, block in ipairs(allBlocks) do
-		block.Legend:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
-		block.Value:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
-		block.Measure:SetFont(FONT_PATH, db.FontSize, FONT_FLAGS)
+---Attaches a font object only when it actually changed, so the unlocked ticker's repeat call
+---allocates nothing once the display has settled on a face.
+local function ApplyFontObject(fontString, object)
+	if fontString:GetFontObject() == object then
+		return
 	end
+
+	fontString:SetFontObject(object)
+
+	-- A string keeps drawing its old glyphs after SetFontObject until something dirties it.
+	-- Every row's Legend, Value and Measure gets a fresh SetText later in the same Refresh
+	-- regardless, but the preview label's text never changes, so it needs the nudge here.
+	local text = fontString:GetText()
+
+	if text ~= nil and text ~= "" then
+		fontString:SetText("")
+		fontString:SetText(text)
+	end
+end
+
+local function ApplyFonts()
+	local object = Fonts:Object(db.FontFace, db.FontSize, db.FontOutline)
+
+	for _, block in ipairs(allBlocks) do
+		ApplyFontObject(block.Legend, object)
+		ApplyFontObject(block.Value, object)
+		ApplyFontObject(block.Measure, object)
+	end
+
+	ApplyFontObject(container.PreviewLabel, Fonts:Object(db.FontFace, PREVIEW_LABEL_FONT_SIZE, db.FontOutline))
 end
 
 ---SetAlpha rather than Hide, because UIWidgetTopCenterContainerFrame's own visibility gate
@@ -373,7 +400,7 @@ local function BuildContainer(frameName, anchorDb, defaultAnchor)
 
 	local previewLabel = frame:CreateFontString(nil, "OVERLAY")
 	previewLabel:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 2)
-	previewLabel:SetFont(FONT_PATH, 10, FONT_FLAGS)
+	-- Font object comes from the first ApplyFonts pass, the same as every row's own text.
 	previewLabel:SetText("PREVIEW")
 	previewLabel:SetTextColor(PREVIEW_BORDER.r, PREVIEW_BORDER.g, PREVIEW_BORDER.b, 1)
 

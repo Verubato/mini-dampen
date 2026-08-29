@@ -16,6 +16,64 @@ M.SECRET = setmetatable({}, {
 	end,
 })
 
+---A LibStub stand-in carrying only LibSharedMedia-3.0, backed by env.Media so a test can
+---register a font the way another addon's media pack would, without vendoring the real library.
+---@param env table
+local function LibStubMock(env)
+	local media = {
+		List = function(_, mediaType)
+			local names = {}
+
+			if mediaType ~= "font" then
+				return names
+			end
+
+			for name in pairs(env.Media) do
+				names[#names + 1] = name
+			end
+
+			table.sort(names)
+
+			return names
+		end,
+		IsValid = function(_, mediaType, name)
+			return mediaType == "font" and env.Media[name] ~= nil
+		end,
+		Fetch = function(_, mediaType, name)
+			return mediaType == "font" and env.Media[name] or nil
+		end,
+		-- CallbackHandler's own signature: called with the target first, not with a colon.
+		RegisterCallback = function(target, event, callback)
+			local list = env.MediaCallbacks[event]
+
+			if list then
+				list[#list + 1] = callback
+			end
+		end,
+	}
+
+	local stub = setmetatable({}, {
+		__call = function(_, name, silent)
+			if name == "LibSharedMedia-3.0" then
+				return media
+			end
+
+			if not silent then
+				error("no such library: " .. tostring(name))
+			end
+
+			return nil
+		end,
+	})
+
+	-- Dropdown.lua's legacy fallback path calls LibStub:GetLibrary(...), not LibStub(...).
+	function stub:GetLibrary(name, silent)
+		return stub(name, silent)
+	end
+
+	return stub
+end
+
 ---(Re)installs every override this addon's WoW API surface needs onto the mocked globals.
 ---Called once after the initial load and again after every simulated Reload, because
 ---WowMock.Install() replaces _G.C_PvP, _G.C_UnitAuras, _G.Enum and friends with fresh tables.
@@ -39,6 +97,8 @@ local function InstallOverrides(env)
 		CaptureBar = 1,
 		StatusBar = 2,
 	}
+
+	_G.LibStub = LibStubMock(env)
 
 	_G.GetTime = function()
 		return env.Time
@@ -235,10 +295,26 @@ function M.Build()
 		CommentatorRefuses = false,
 		Exists = { player = true, party1 = true, party2 = true, arena1 = true, arena2 = true, arena3 = true },
 		Tickers = {},
+		-- Font name -> file, standing in for whatever another addon has registered with
+		-- LibSharedMedia-3.0 this session.
+		Media = {},
+		-- Event name -> list of callbacks, standing in for CallbackHandler's own registry.
+		MediaCallbacks = { LibSharedMedia_Registered = {}, LibSharedMedia_SetGlobal = {} },
 	}
 
 	InstallOverrides(env)
 	harness.Login(context)
+
+	---Fires LibSharedMedia_Registered synchronously, the way the real library fires once per
+	---entry, so a media pack registering several fonts in one frame is a test calling this
+	---several times before the next env.Tick.
+	function env.RegisterFont(name, file)
+		env.Media[name] = file
+
+		for _, callback in ipairs(env.MediaCallbacks.LibSharedMedia_Registered) do
+			callback("LibSharedMedia_Registered")
+		end
+	end
 
 	-- Leaves env.MatchState as whatever the test already set it to, defaulting to Waiting, so a
 	-- test can enter already Engaged without a StartUp edge ever having been observed.
