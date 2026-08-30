@@ -722,21 +722,21 @@ function M:Debug()
 	local group = GetNumGroupMembers and GetNumGroupMembers()
 
 	lines[#lines + 1] = string.format(
-		"inScope=%s locked=%s instanceType=%s matchState=%s",
+		"inScope=%s testMode=%s instanceType=%s matchState=%s",
 		SafeString(state.inScope),
-		SafeString(db.Locked),
+		SafeString(addon.Display:IsTestMode()),
 		SafeString(instanceType),
 		SafeString(matchState)
 	)
 
 	local source
 
-	if not db.Locked then
-		source = "sample (unlocked preview)"
+	if addon.Display:IsTestMode() then
+		source = "sample (test preview)"
 	elseif state.inScope then
 		source = "live"
 	else
-		source = "none, out of scope and locked"
+		source = "none, out of scope and not testing"
 	end
 
 	lines[#lines + 1] = string.format("onScreenValues=%s", source)

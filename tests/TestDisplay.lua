@@ -322,15 +322,49 @@ fw.describe("MiniDampen - container layout", function()
 		env.Enter()
 	end)
 
-	fw.it("the container is movable and neither row is draggable on its own", function()
-		_G.MiniDampenDB.Locked = false
-		env.Addon.Display:Refresh()
+	fw.it("locks the container by default, and unlocks it once test mode is switched on", function()
+		fw.eq(env.Addon.Display.Container.Frame:IsMovable(), false, "not draggable until test mode is on")
 
-		fw.eq(env.Addon.Display.Container.Frame:IsMovable(), true, "the container can be dragged")
+		env.Addon.Display:SetTestMode(true)
+
+		fw.eq(env.Addon.Display.Container.Frame:IsMovable(), true, "the container can be dragged once test mode is on")
 		fw.eq(env.Addon.Display.CountsBlock.Frame:IsMovable(), false, "the counts row cannot be dragged on its own")
 		fw.eq(env.Addon.Display.DampeningBlock.Frame:IsMovable(), false, "the dampening row cannot be dragged on its own")
 		fw.is_nil(env.Addon.Display.CountsBlock.Frame:GetScript("OnDragStart"), "the counts row has no drag script of its own")
 		fw.is_nil(env.Addon.Display.DampeningBlock.Frame:GetScript("OnDragStart"), "the dampening row has no drag script of its own")
+	end)
+
+	fw.it("refuses a drag that starts while test mode is off", function()
+		local frame = env.Addon.Display.Container.Frame
+		local moves = 0
+		local real = frame.StartMoving
+
+		frame.StartMoving = function()
+			moves = moves + 1
+		end
+
+		frame:GetScript("OnDragStart")(frame)
+		fw.eq(moves, 0, "a drag started with test mode off moves nothing")
+
+		env.Addon.Display:SetTestMode(true)
+		frame:GetScript("OnDragStart")(frame)
+		fw.eq(moves, 1, "the same drag moves the frame once test mode is on")
+
+		frame.StartMoving = real
+	end)
+
+	fw.it("never writes test mode to saved variables", function()
+		local before = {}
+
+		for key in pairs(_G.MiniDampenDB) do
+			before[key] = true
+		end
+
+		env.Addon.Display:SetTestMode(true)
+
+		for key in pairs(_G.MiniDampenDB) do
+			fw.truthy(before[key], "no new saved variable key from switching test mode on: " .. tostring(key))
+		end
 	end)
 
 	fw.it("anchors both rows top-centre on the container", function()
@@ -370,7 +404,7 @@ fw.describe("MiniDampen - container layout", function()
 
 		local widest = math.max(env.Addon.Display.CountsBlock.Frame:GetWidth(), env.Addon.Display.DampeningBlock.Frame:GetWidth())
 
-		fw.eq(env.Addon.Display.Container.Frame:GetWidth(), widest, "no padding while locked, so the container is exactly the wider row")
+		fw.eq(env.Addon.Display.Container.Frame:GetWidth(), widest, "no padding while not testing, so the container is exactly the wider row")
 		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 44, "two stacked rows, a 24 gap plus the second row's own 20")
 	end)
 
@@ -418,62 +452,57 @@ fw.describe("MiniDampen - container layout", function()
 		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 44, "the container holds two rows, not three")
 	end)
 
-	fw.it("sizes the container for all three rows while unlocked", function()
-		_G.MiniDampenDB.Locked = false
-		env.Addon.Display:Refresh()
+	fw.it("sizes the container for all three rows while testing", function()
+		env.Addon.Display:SetTestMode(true)
 
-		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 68, "three rows drawn while unlocked")
+		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 68, "three rows drawn while testing")
 	end)
 end)
 
-fw.describe("MiniDampen - unlocked display", function()
+fw.describe("MiniDampen - test mode display", function()
 	local env
 
 	fw.before_each(function()
 		env = Arena.Build()
 	end)
 
-	fw.it("draws no preview backdrop or caption, and sizes the same as a locked frame drawing the same three rows", function()
-		_G.MiniDampenDB.Locked = false
-		-- Lands the sample in its round-record half, to match the locked side's solo shuffle mode below.
+	fw.it("draws no preview backdrop or caption, and sizes the same as a live match drawing the same three rows", function()
+		env.Addon.Display:SetTestMode(true)
+		-- Lands the sample in its round-record half, to match the live match's solo shuffle mode below.
 		env.Tick(10)
-		env.Addon.Display:Refresh()
 
 		fw.is_nil(env.Addon.Display.Container.PreviewBackdrop, "no preview backdrop object exists")
 		fw.is_nil(env.Addon.Display.Container.PreviewLabel, "no preview caption object exists")
 
-		local unlockedWidth = env.Addon.Display.Container.Frame:GetWidth()
+		local testWidth = env.Addon.Display.Container.Frame:GetWidth()
 
-		local locked = Arena.Build()
-		locked.SoloShuffle = true
-		locked.Enter()
-		locked.SetState(2) -- StartUp
-		locked.SetState(3) -- Engaged, so the round line has a number to draw
-		locked.SetDampening(10)
-		locked.Tick(0.5)
+		local live = Arena.Build()
+		live.SoloShuffle = true
+		live.Enter()
+		live.SetState(2) -- StartUp
+		live.SetState(3) -- Engaged, so the round line has a number to draw
+		live.SetDampening(10)
+		live.Tick(0.5)
 
-		fw.eq(locked.Addon.Display.Container.Frame:GetWidth(), unlockedWidth,
-			"unlocked draws no wider than locked draws for the same three rows")
+		fw.eq(live.Addon.Display.Container.Frame:GetWidth(), testWidth,
+			"test mode draws no wider than a live match for the same three rows")
 	end)
 
-	fw.it("stays draggable while unlocked with no arena entered", function()
-		_G.MiniDampenDB.Locked = false
-		env.Addon.Display:Refresh()
+	fw.it("stays draggable while testing with no arena entered", function()
+		env.Addon.Display:SetTestMode(true)
 
 		fw.truthy(env.Addon.Display.CountsBlock.Frame:IsShown(), "sample content visible outside an arena")
 		fw.eq(env.Addon.Display.Container.Frame:IsMovable(), true, "still draggable with no match running")
 	end)
 
 	fw.it("previews both teams at full strength, with no ? and nobody dead", function()
-		_G.MiniDampenDB.Locked = false
-		env.Addon.Display:Refresh()
+		env.Addon.Display:SetTestMode(true)
 
 		fw.eq(StripColor(env.Addon.Display.CountsBlock.Value:GetText()), "3 vs 3", "sample counts read full strength on both sides")
 	end)
 
 	fw.it("alternates the preview between the alive counts and the solo shuffle round record", function()
-		_G.MiniDampenDB.Locked = false
-		env.Addon.Display:Refresh()
+		env.Addon.Display:SetTestMode(true)
 
 		local seen = {}
 		local roundLines = {}
@@ -500,8 +529,7 @@ fw.describe("MiniDampen - preview rows", function()
 	end)
 
 	fw.it("draws every row for the whole alternation", function()
-		_G.MiniDampenDB.Locked = false
-		env.Addon.Display:Refresh()
+		env.Addon.Display:SetTestMode(true)
 
 		local hiddenRows = {}
 
@@ -527,8 +555,7 @@ fw.describe("MiniDampen - preview dampening", function()
 	end)
 
 	fw.it("holds the sample dampening at one fixed reading, with nothing animating", function()
-		_G.MiniDampenDB.Locked = false
-		env.Addon.Display:Refresh()
+		env.Addon.Display:SetTestMode(true)
 
 		local first = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
 
@@ -541,8 +568,7 @@ fw.describe("MiniDampen - preview dampening", function()
 	end)
 
 	fw.it("creates exactly one preview ticker, not a fresh one on every Refresh", function()
-		_G.MiniDampenDB.Locked = false
-		env.Addon.Display:Refresh()
+		env.Addon.Display:SetTestMode(true)
 		env.Addon.Display:Refresh()
 		env.Addon.Display:Refresh()
 
@@ -557,19 +583,16 @@ fw.describe("MiniDampen - preview dampening", function()
 		fw.eq(live, 1, "one live ticker driving the preview")
 	end)
 
-	fw.it("cancels the preview ticker on locking again", function()
-		_G.MiniDampenDB.Locked = false
-		env.Addon.Display:Refresh()
+	fw.it("cancels the preview ticker on switching test mode off again", function()
+		env.Addon.Display:SetTestMode(true)
 
-		_G.MiniDampenDB.Locked = true
-		env.Addon.Display:Refresh()
+		env.Addon.Display:SetTestMode(false)
 
-		fw.truthy(env.Tickers[1].Ticker:IsCancelled(), "ticker cancelled once locked")
+		fw.truthy(env.Tickers[1].Ticker:IsCancelled(), "ticker cancelled once test mode is off")
 	end)
 
 	fw.it("forces a bracketed value that overrides the sample reading", function()
-		_G.MiniDampenDB.Locked = false
-		env.Addon.Display:Refresh()
+		env.Addon.Display:SetTestMode(true)
 
 		local unforced = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
 
@@ -583,11 +606,11 @@ fw.describe("MiniDampen - preview dampening", function()
 		env.Addon.Display:SetForcedDampening(nil)
 	end)
 
-	fw.it("shows the forced value even locked and outside an arena, and hides once cleared", function()
+	fw.it("shows the forced value outside an arena, and hides once cleared", function()
 		-- Deliberately no env.Enter(): the whole point is inspecting a tier without a real match.
 		env.Addon.Display:SetForcedDampening(75)
 
-		fw.truthy(env.Addon.Display.DampeningBlock.Frame:IsShown(), "forced value shown with no match and Locked")
+		fw.truthy(env.Addon.Display.DampeningBlock.Frame:IsShown(), "forced value shown with no match running")
 
 		env.Addon.Display:SetForcedDampening(nil)
 

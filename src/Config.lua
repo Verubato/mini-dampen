@@ -7,7 +7,6 @@ local db
 local dbDefaults = {
 	Enabled = true,
 	HideBlizzardWidgets = true,
-	Locked = true,
 	FontSize = 16,
 	-- false means the game's own default face; a shared media font name string otherwise.
 	FontFace = false,
@@ -43,14 +42,16 @@ function M:Init()
 	local columns = 2
 	local columnStep = mini:ColumnWidth(columns, horizontalSpacing, 0)
 
-	-- The three switches share one row, so they get their own narrower column step.
-	local switchStep = mini:ColumnWidth(3, horizontalSpacing, 0)
-
 	local header = mini:PanelHeader({
 		Parent = panel,
 		Description = "Shows a team alive-count, the current dampening percentage, and your solo shuffle round record in arena.",
 		Gap = 6,
 		Divider = true,
+		Test = {
+			OnClick = function()
+				addon.Display:SetTestMode(not addon.Display:IsTestMode())
+			end,
+		},
 	})
 
 	local enabledChk = mini:Checkbox({
@@ -68,22 +69,6 @@ function M:Init()
 
 	enabledChk:SetPoint("TOPLEFT", header.Anchor, "BOTTOMLEFT", 0, -verticalSpacing)
 
-	local lockedChk = mini:Checkbox({
-		Parent = panel,
-		LabelText = "Locked",
-		Tooltip = "Unlock to show sample data and so you can drag the frame into position.",
-		GetValue = function()
-			return db.Locked
-		end,
-		SetValue = function(value)
-			db.Locked = value
-			addon:Refresh()
-		end,
-	})
-
-	lockedChk:SetPoint("TOP", enabledChk, "TOP", 0, 0)
-	lockedChk:SetPoint("LEFT", panel, "LEFT", switchStep, 0)
-
 	local hideWidgetsChk = mini:Checkbox({
 		Parent = panel,
 		LabelText = "Hide Blizzard",
@@ -98,7 +83,7 @@ function M:Init()
 	})
 
 	hideWidgetsChk:SetPoint("TOP", enabledChk, "TOP", 0, 0)
-	hideWidgetsChk:SetPoint("LEFT", panel, "LEFT", switchStep * 2, 0)
+	hideWidgetsChk:SetPoint("LEFT", panel, "LEFT", columnStep, 0)
 
 	local appearanceDivider = mini:Divider({
 		Parent = panel,
@@ -258,15 +243,7 @@ function M:Init()
 	SlashCmdList.MINIDAMPEN = function(msg)
 		msg = (msg or ""):lower():match("^%s*(.-)%s*$")
 
-		if msg == "lock" then
-			db.Locked = true
-			addon:Refresh()
-			return
-		elseif msg == "unlock" then
-			db.Locked = false
-			addon:Refresh()
-			return
-		elseif msg == "debug" then
+		if msg == "debug" then
 			-- Never gated on combat, since reading these values mid-fight, where /dump itself
 			-- is refused, is the entire point of this command.
 			for _, line in ipairs(addon.MatchState:Debug()) do
@@ -308,8 +285,6 @@ function M:Init()
 
 		if msg ~= "" then
 			mini:NotifyWithPrefix("Commands:")
-			mini:NotifyWithPrefix("/minidampen lock")
-			mini:NotifyWithPrefix("/minidampen unlock")
 			mini:NotifyWithPrefix("/minidampen debug")
 			mini:NotifyWithPrefix("/minidampen probe")
 			mini:NotifyWithPrefix("/minidampen dampening <percent>")

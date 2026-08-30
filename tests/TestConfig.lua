@@ -122,6 +122,24 @@ fw.describe("MiniDampen - /minidampen dampening", function()
 
 		fw.eq(#env.Context.Mock.State.Prints, before + 1, "one usage message printed")
 	end)
+
+	fw.it("falls through to the usage message for the retired lock and unlock commands", function()
+		local before = #env.Context.Mock.State.Prints
+
+		SlashCmdList.MINIDAMPEN("lock")
+
+		local lines = {}
+
+		for i = before + 1, #env.Context.Mock.State.Prints do
+			lines[#lines + 1] = env.Context.Mock.State.Prints[i]
+		end
+
+		fw.truthy(#lines > 1, "the usage list printed rather than silently doing nothing")
+
+		for _, line in ipairs(lines) do
+			fw.falsy(line:find("lock", 1, true) ~= nil, "the usage list no longer advertises lock or unlock: " .. line)
+		end
+	end)
 end)
 
 fw.describe("MiniDampen - /minidampen probe", function()

@@ -45,13 +45,13 @@ is an optional legend and a value, centred as a unit.
 ### Positioning
 
 - Drag the display with the left mouse button to move it; every row moves together and none can
-  be positioned separately. Unlock to show it everywhere with sample data, for positioning it
-  outside a match.
-- The "Locked" option prevents dragging (and mouse interaction) on the display.
-- While unlocked, the counts row alternates every 10 seconds between the alive counts and a
+  be positioned separately. Click Test in the settings panel to show it everywhere with sample
+  data and unlock dragging, for positioning it outside a match.
+- The display is only draggable while test mode is on; clicking Test again locks it back down.
+- While testing, the counts row alternates every 10 seconds between the alive counts and a
   sample solo shuffle round record, so both can be previewed outside the match type that
   produces them.
-- While unlocked every row is drawn regardless, and the dampening row reads a fixed 50%, so
+- While testing every row is drawn regardless, and the dampening row reads a fixed 50%, so
   the display is positioned at the full size it can reach.
 - The dampening row hides itself whenever there is nothing readable to show, leaving no gap
   behind it.
@@ -59,7 +59,6 @@ is an optional legend and a value, centred as a unit.
 ### Slash commands
 
 - `/minidampen`, `/mdampen`, `/md`: opens the settings panel.
-- `/minidampen lock`, `/minidampen unlock`: the same toggle as the "Locked" checkbox.
 - `/minidampen dampening <percent>`: forces the dampening row to a bracket-marked value
   from 0 to 999, out of range clamped rather than rejected, until cleared. Ignored the
   moment a real match is in scope, so a forgotten preview can never be mistaken for what a
@@ -68,6 +67,8 @@ is an optional legend and a value, centred as a unit.
 - `/minidampen debug`: prints every value the rows are built from to chat, in or out
   of combat and in or out of an arena. See the Troubleshooting table below for when this is
   the right tool.
+- `/minidampen probe`: prints the raw client data behind those values, in or out of an
+  arena.
 
 ### Display
 
@@ -97,22 +98,22 @@ dampening percentage, and your solo shuffle round record in arena."
 | Setting | Type | Default | Notes |
 | --- | --- | --- | --- |
 | Enabled | checkbox | on | Master switch. Off means the gate never opens. |
-| Locked | checkbox | on | Unlock to preview the display with sample data and drag it. |
 | Hide Blizzard | checkbox | on | Dims Blizzard's own top-center arena widgets while in scope. |
 | Font size | slider | 16 | 10-24, applies to every row. |
 | Font | dropdown | Game Default | The face every row draws in. Lists the client's own faces plus anything another addon has registered with LibSharedMedia-3.0. |
 | Outline | dropdown | Outline | None, Outline, or Thick outline. |
 
-There is no reset-to-defaults button; settings live in MiniDampenDB.
+The panel header also carries a Test button, which toggles test mode (sample data,
+draggable).
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 | --- | --- |
-| Nothing shows in an arena | Check "Enabled". Unlock the frame briefly to confirm the rows exist and draw with sample data. |
+| Nothing shows in an arena | Check "Enabled". Click Test briefly to confirm the rows exist and draw with sample data. |
 | Dampening row is missing entirely | The dampening aura was unreadable this session (absent, secret, or not a number); the row hides rather than showing a blank or a zero. |
 | Enemy alive count seems to skip an opponent | Either it has been continuously out of sight for 1.5 seconds, drawn hidden without changing the count, or it disconnected or left and Blizzard cleared its visibility override, drawn the same way but this time subtracted from the count and marked with `?` since it can no longer be confirmed alive. A departed ally is handled the same way. |
 | Round record shows a trailing `?` | At least one settled round could not be determined (usually an opponent left before dying), so the total is unknown rather than wrong. |
-| Cannot move the display | "Locked" is checked. Unlock it first. |
+| Cannot move the display | Test mode is off. Click Test in the settings panel first. |
 | Blizzard's own arena widgets are gone | Expected while "Hide Blizzard" is on and you are in scope; they return to whatever alpha MiniDampen found them at on leaving, so they can come back dimmed if another addon had already dimmed them. |
 | Need to see the raw values behind any of the above | `/minidampen debug` prints them all to chat, including mid-fight where `/dump` itself is refused. See Slash commands above. |

@@ -19,7 +19,7 @@ local WIDEST_ROUNDS_VALUE = "6W - 6L?"
 local WIDEST_ROUND_LINE = "Round 6/6"
 -- Reserves room for a three digit percent plus a forced value's brackets, both expected readings.
 local WIDEST_DAMPENING_VALUE = "[300%]"
--- Sample content drawn everywhere while unlocked, so the display can be positioned without a
+-- Sample content drawn everywhere while testing, so the display can be positioned without a
 -- real match.
 local SAMPLE_STATE = {
 	isSoloShuffle = false,
@@ -49,7 +49,7 @@ local SAMPLE_PERIOD = 20
 -- Mid-range, so the preview reads as a plausible match rather than an extreme.
 local PREVIEW_DAMPENING = 50
 -- Only has to catch the sample swap, which is ten seconds wide.
-local UNLOCKED_REFRESH_INTERVAL = 1
+local TEST_REFRESH_INTERVAL = 1
 local DEFAULT_COUNTS_ANCHOR = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -140 }
 local db
 local state
@@ -58,7 +58,7 @@ local container
 local countsBlock
 local roundBlock
 local dampeningBlock
--- Filled once in Init, so the font pass allocates nothing on a path the unlocked ticker runs.
+-- Filled once in Init, so the font pass allocates nothing on a path the test ticker runs.
 local allBlocks = {}
 -- Refilled every Refresh, for the same reason, out of a fixed set of row slots.
 local visibleRows = {}
@@ -70,12 +70,14 @@ end
 -- Never restore an alpha this addon did not set itself.
 local didWeHide = false
 local preexistingAlpha
--- Runs only while unlocked, so the sample swap keeps happening outside an arena, where nothing
+-- Runs only while testing, so the sample swap keeps happening outside an arena, where nothing
 -- else calls Refresh on its own.
-local unlockedTicker
+local testTicker
 -- Never written to saved variables, so a forced value can't survive a reload or be mistaken
 -- for a real setting.
 local forcedDampening
+-- Transient like forcedDampening, so a test session never survives a reload either.
+local testMode = false
 ---@class Display
 local M = {}
 addon.Display = M
@@ -277,7 +279,7 @@ local function LayoutContainer(rows)
 	container.Frame:SetShown(#rows > 0)
 end
 
----Attaches a font object only when it actually changed, so the unlocked ticker's repeat call
+---Attaches a font object only when it actually changed, so the test ticker's repeat call
 ---allocates nothing once the display has settled on a face.
 local function ApplyFontObject(fontString, object)
 	if fontString:GetFontObject() == object then
@@ -345,7 +347,7 @@ end
 local function BuildContainer(frameName, anchorDb, defaultAnchor)
 	local frame = CreateFrame("Frame", frameName, UIParent)
 
-	mini:MakeMovable(frame, anchorDb, { IsLocked = function() return db.Locked end })
+	mini:MakeMovable(frame, anchorDb, { IsLocked = function() return not testMode end })
 	mini:ApplyPosition(frame, anchorDb, defaultAnchor)
 
 	return {
@@ -353,14 +355,14 @@ local function BuildContainer(frameName, anchorDb, defaultAnchor)
 	}
 end
 
-local function ApplyUnlockedTicker(unlocked)
-	if unlocked and not unlockedTicker then
-		unlockedTicker = C_Timer.NewTicker(UNLOCKED_REFRESH_INTERVAL, function()
+local function ApplyTestTicker(testing)
+	if testing and not testTicker then
+		testTicker = C_Timer.NewTicker(TEST_REFRESH_INTERVAL, function()
 			M:Refresh()
 		end)
-	elseif not unlocked and unlockedTicker then
-		unlockedTicker:Cancel()
-		unlockedTicker = nil
+	elseif not testing and testTicker then
+		testTicker:Cancel()
+		testTicker = nil
 	end
 end
 
@@ -379,8 +381,21 @@ function M:GetForcedDampening()
 	return forcedDampening
 end
 
+---Switches every row to sample data and unlocks the frame for dragging, until test mode is
+---switched off again.
+---@param value boolean
+function M:SetTestMode(value)
+	testMode = value
+	self:Refresh()
+end
+
+function M:IsTestMode()
+	return testMode
+end
+
 function M:Refresh()
-	-- SetForcedDampening and the unlocked ticker reach this without going through addon:Refresh.
+	-- SetForcedDampening, SetTestMode and the test ticker reach this without going through
+	-- addon:Refresh.
 	if not initialised then
 		return
 	end
@@ -388,27 +403,25 @@ function M:Refresh()
 	ApplyWidgetDimming(state.inScope)
 	ApplyFonts()
 
-	local unlocked = not db.Locked
+	ApplyTestTicker(testMode)
 
-	ApplyUnlockedTicker(unlocked)
-
-	local effState = unlocked and SampleState() or state
-	local dampeningValue = unlocked and PREVIEW_DAMPENING or effState.dampening
+	local effState = testMode and SampleState() or state
+	local dampeningValue = testMode and PREVIEW_DAMPENING or effState.dampening
 	-- The preview draws every row regardless, so the display is positioned at the full size it
 	-- can reach.
-	local showCounts = unlocked or state.inScope
+	local showCounts = testMode or state.inScope
 	-- A forced value only wins while no real arena is in scope, since it is an explicit
 	-- diagnostic the user just asked for, not a reading that should outlive a real match starting.
 	local forcedActive = forcedDampening ~= nil and not state.inScope
-	local showDampening = unlocked or forcedActive or (state.inScope and dampeningValue ~= nil)
+	local showDampening = testMode or forcedActive or (state.inScope and dampeningValue ~= nil)
 	-- The round line rides the counts row, since it is the other half of the same reading.
-	local showRounds = showCounts and (unlocked or CountsMode(effState) == "rounds")
+	local showRounds = showCounts and (testMode or CountsMode(effState) == "rounds")
 
 	countsBlock.Frame:SetShown(showCounts)
 	roundBlock.Frame:SetShown(showRounds)
 	dampeningBlock.Frame:SetShown(showDampening)
 
-	mini:SetPositionLocked(container.Frame, db.Locked)
+	mini:SetPositionLocked(container.Frame, not testMode)
 
 	wipe(visibleRows)
 

@@ -993,16 +993,16 @@ fw.describe("MiniDampen - Debug()", function()
 		fw.truthy(line:find("displayed=secret", 1, true) ~= nil, "rendered as \"secret\" rather than tostring'd or indexed")
 	end)
 
-	fw.it("tells a live reading from the unlocked sample preview", function()
+	fw.it("tells a live reading from the test mode sample preview", function()
 		env.Enter()
 		env.SetDampening(25)
 		env.Tick(0.5)
 
-		fw.truthy(FindLine(env.Addon.MatchState:Debug(), "onScreenValues=live") ~= nil, "live while locked and in scope")
+		fw.truthy(FindLine(env.Addon.MatchState:Debug(), "onScreenValues=live") ~= nil, "live while not testing and in scope")
 
-		_G.MiniDampenDB.Locked = false
+		env.Addon.Display:SetTestMode(true)
 
-		fw.truthy(FindLine(env.Addon.MatchState:Debug(), "onScreenValues=sample") ~= nil, "sample once unlocked")
+		fw.truthy(FindLine(env.Addon.MatchState:Debug(), "onScreenValues=sample") ~= nil, "sample once test mode is on")
 	end)
 end)
 
