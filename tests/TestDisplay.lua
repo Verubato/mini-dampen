@@ -13,16 +13,11 @@ local function ColorCode(color)
 	return string.format("%02x%02x%02x", color[1] * 255, color[2] * 255, color[3] * 255)
 end
 
--- Display.lua's own VALUE_GAP, which it does not export.
-local VALUE_GAP = 8
+-- Display.lua's own WIDEST_DAMPENING_LINE, which it does not export.
+local WIDEST_DAMPENING_LINE = "Dampening [300%]"
 
----Where a row's content centre must land, given LayoutRow reserves legend + gap + content and
----centres the content in the last of those.
 local function ExpectedContentCentre(block)
-	local legendWidth = block.Legend:GetStringWidth()
-	local gap = legendWidth > 0 and VALUE_GAP or 0
-
-	return (block.Frame:GetWidth() + legendWidth + gap) / 2
+	return block.Frame:GetWidth() / 2
 end
 
 fw.describe("MiniDampen - counts value text", function()
@@ -261,16 +256,16 @@ fw.describe("MiniDampen - counts row layout", function()
 		env.Enter()
 	end)
 
-	fw.it("centres the value within the whole frame when the counts row draws no legend", function()
+	fw.it("keeps the value centred at half the row's own measured width in counts mode", function()
 		local point, relativeTo, relativePoint, x = env.Addon.Display.CountsBlock.Value:GetPoint(1)
 
 		fw.eq(point, "CENTER", "value's own anchor point")
-		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Frame, "measured from the row itself, so a blank legend is never an anchor target")
+		fw.eq(relativeTo, env.Addon.Display.CountsBlock.Frame, "measured from the row itself")
 		fw.eq(relativePoint, "LEFT", "off the row's own left edge")
-		fw.eq(x, env.Addon.Display.CountsBlock.Frame:GetWidth() / 2, "a blank legend leaves no gap, so the value's centre lands on the frame's own midpoint")
+		fw.eq(x, env.Addon.Display.CountsBlock.Frame:GetWidth() / 2, "the row's width is reserved for the widest counts reading, so the value's centre lands at half of that width")
 	end)
 
-	fw.it("centres the value within its own reserved slot in rounds mode", function()
+	fw.it("keeps the value centred at half the row's own measured width in rounds mode", function()
 		local roundsEnv = Arena.Build()
 		roundsEnv.SoloShuffle = true
 		roundsEnv.Enter()
@@ -307,10 +302,10 @@ fw.describe("MiniDampen - counts row layout", function()
 		fw.eq(widthAfter, widthBefore, "block width reserved for the widest value, not the live one")
 	end)
 
-	fw.it("draws no legend on the counts row", function()
+	fw.it("has no legend field on the counts row", function()
 		env.Addon.Display:Refresh()
 
-		fw.eq(env.Addon.Display.CountsBlock.Legend:GetText(), "", "the \"Us vs Opponent\" label is gone")
+		fw.is_nil(env.Addon.Display.CountsBlock.Legend, "the \"Us vs Opponent\" label field is gone")
 	end)
 end)
 
@@ -386,7 +381,7 @@ fw.describe("MiniDampen - container layout", function()
 		fw.eq(dx, 0, "no horizontal offset, so the row's own centre matches the container's")
 	end)
 
-	fw.it("centres the dampening value in its own slot, past its legend", function()
+	fw.it("keeps the dampening value centred at half the row's own measured width", function()
 		env.SetDampening(10)
 		env.Tick(0.5)
 
@@ -395,7 +390,29 @@ fw.describe("MiniDampen - container layout", function()
 		fw.eq(point, "CENTER", "value's own anchor point")
 		fw.eq(relativeTo, env.Addon.Display.DampeningBlock.Frame, "measured from the row itself")
 		fw.eq(relativePoint, "LEFT", "off the row's own left edge")
-		fw.eq(x, ExpectedContentCentre(env.Addon.Display.DampeningBlock), "centred in the slot past the legend, not flush against it")
+		fw.eq(x, ExpectedContentCentre(env.Addon.Display.DampeningBlock), "centred on the row's own midpoint")
+	end)
+
+	fw.it("draws the dampening row's label and percent as one string, not a separate legend", function()
+		env.SetDampening(5)
+		env.Tick(0.5)
+
+		fw.eq(StripColor(env.Addon.Display.DampeningBlock.Value:GetText()), "Dampening 5%", "label and percent share one font string, like the round row already does")
+	end)
+
+	fw.it("reserves the dampening row's width for the whole line, label included", function()
+		env.SetDampening(5)
+		env.Tick(0.5)
+
+		-- Measured through the block's own Measure field, on the same font, so the reserved
+		-- width is pinned against the widest reading.
+		local measure = env.Addon.Display.DampeningBlock.Measure
+		measure:SetText(WIDEST_DAMPENING_LINE)
+
+		local widestWidth = measure:GetStringWidth()
+		local frameWidth = env.Addon.Display.DampeningBlock.Frame:GetWidth()
+
+		fw.eq(frameWidth, widestWidth, "the reserved width matches the label, percent, and bracket reading exactly")
 	end)
 
 	fw.it("sizes the container to the wider of the two rows", function()
@@ -563,7 +580,7 @@ fw.describe("MiniDampen - preview dampening", function()
 
 		local second = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
 
-		fw.eq(first, "50%", "the sample reads a plain mid-range percent")
+		fw.eq(first, "Dampening 50%", "the sample reads a plain mid-range percent")
 		fw.eq(second, first, "and never moves on its own")
 	end)
 
@@ -601,7 +618,7 @@ fw.describe("MiniDampen - preview dampening", function()
 		local forced = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
 
 		fw.falsy(unforced:find("[", 1, true), "the sample's own reading isn't bracketed")
-		fw.eq(forced, "[42%]", "bracket-marked, replacing the sample's own reading")
+		fw.eq(forced, "Dampening [42%]", "bracket-marked, replacing the sample's own reading")
 
 		env.Addon.Display:SetForcedDampening(nil)
 	end)
@@ -636,7 +653,7 @@ fw.describe("MiniDampen - forced dampening safety", function()
 
 		local text = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
 
-		fw.eq(text, "10%", "the real reading wins, the forced value never leaked into the match")
+		fw.eq(text, "Dampening 10%", "the real reading wins, the forced value never leaked into the match")
 
 		env.Addon.Display:SetForcedDampening(nil)
 	end)
@@ -655,6 +672,35 @@ fw.describe("MiniDampen - forced dampening safety", function()
 		end
 
 		env.Addon.Display:SetForcedDampening(nil)
+	end)
+end)
+
+fw.describe("MiniDampen - test mode inside a live arena", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+		env.Enter()
+	end)
+
+	fw.it("overrides a live match while on, and shows the real reading again once switched off", function()
+		env.Kill("arena3")
+		env.SetDampening(10)
+		env.Tick(0.5)
+		env.Addon.Display:Refresh()
+
+		fw.eq(StripColor(env.Addon.Display.CountsBlock.Value:GetText()), "3 vs 2", "the real alive count shows before test mode is touched")
+		fw.eq(StripColor(env.Addon.Display.DampeningBlock.Value:GetText()), "Dampening 10%", "the real dampening shows before test mode is touched")
+
+		env.Addon.Display:SetTestMode(true)
+
+		fw.eq(StripColor(env.Addon.Display.CountsBlock.Value:GetText()), "3 vs 3", "test mode overrides the live match with the sample counts")
+		fw.eq(StripColor(env.Addon.Display.DampeningBlock.Value:GetText()), "Dampening 50%", "test mode overrides the live match with the sample dampening")
+
+		env.Addon.Display:SetTestMode(false)
+
+		fw.eq(StripColor(env.Addon.Display.CountsBlock.Value:GetText()), "3 vs 2", "switching test mode off shows the real match again, not the sample stuck in place")
+		fw.eq(StripColor(env.Addon.Display.DampeningBlock.Value:GetText()), "Dampening 10%", "switching test mode off shows the real dampening again, not the sample stuck in place")
 	end)
 end)
 

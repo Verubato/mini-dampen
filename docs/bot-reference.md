@@ -5,7 +5,7 @@
 Shows a team alive-count, the current dampening percentage, and (in solo shuffle) your
 round record, while you are in an arena. One draggable display, stacked top to bottom: a
 counts row (or the round record), a solo shuffle round line, then a dampening row. Each row
-is an optional legend and a value, centred as a unit.
+draws a single string, centred as a unit.
 
 ## Facts
 
@@ -75,8 +75,8 @@ is an optional legend and a value, centred as a unit.
 Each row is centred independently on the display:
 
 ```
-      3 vs 3
-  Dampening  10%
+     3 vs 3
+Dampening 10%
 ```
 
 Solo shuffle swaps the top row for the round record, with the round line below it. The win
@@ -87,7 +87,7 @@ six rounds and the win/loss count alone already says enough.
 ```
   2W - 3L
  Round 6/6
-Dampening  30%
+Dampening 30%
 ```
 
 ## Settings

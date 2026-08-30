@@ -7,16 +7,13 @@ local Arena = require("Arena")
 
 local DEFAULT_FACE_FILE = "Fonts\\FRIZQT__.TTF"
 
----One entry per fontstring the four font sites touch: every row's Legend, Value and Measure.
+---One entry per fontstring ApplyFonts touches.
 local function FontSites(display)
 	return {
-		{ Name = "counts legend", Object = display.CountsBlock.Legend:GetFontObject() },
 		{ Name = "counts value", Object = display.CountsBlock.Value:GetFontObject() },
 		{ Name = "counts measure", Object = display.CountsBlock.Measure:GetFontObject() },
-		{ Name = "round legend", Object = display.RoundBlock.Legend:GetFontObject() },
 		{ Name = "round value", Object = display.RoundBlock.Value:GetFontObject() },
 		{ Name = "round measure", Object = display.RoundBlock.Measure:GetFontObject() },
-		{ Name = "dampening legend", Object = display.DampeningBlock.Legend:GetFontObject() },
 		{ Name = "dampening value", Object = display.DampeningBlock.Value:GetFontObject() },
 		{ Name = "dampening measure", Object = display.DampeningBlock.Measure:GetFontObject() },
 	}
@@ -40,7 +37,7 @@ fw.describe("MiniDampen - font face application", function()
 		env.Addon.Display:Refresh()
 	end)
 
-	fw.it("changes the object on every row's Legend, Value and Measure", function()
+	fw.it("changes the object on every row's Value and Measure", function()
 		local display = env.Addon.Display
 		local before = FontSites(display)
 
@@ -49,7 +46,7 @@ fw.describe("MiniDampen - font face application", function()
 
 		local after = FontSites(display)
 
-		fw.eq(#after, 9, "fixture: still asking about every font site")
+		fw.eq(#after, 6, "fixture: still asking about every font site")
 
 		for i = 1, #before do
 			fw.truthy(after[i].Object ~= nil, after[i].Name .. " picked up a real object")

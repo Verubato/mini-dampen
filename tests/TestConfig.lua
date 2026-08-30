@@ -83,7 +83,7 @@ fw.describe("MiniDampen - /minidampen dampening", function()
 
 		local text = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
 
-		fw.eq(text, "[42%]", "forced through the slash command the same way SetForcedDampening renders it")
+		fw.eq(text, "Dampening [42%]", "forced through the slash command the same way SetForcedDampening renders it")
 
 		SlashCmdList.MINIDAMPEN("dampening clear")
 
@@ -100,17 +100,17 @@ fw.describe("MiniDampen - /minidampen dampening", function()
 
 		local text = StripColor(env.Addon.Display.DampeningBlock.Value:GetText())
 
-		fw.eq(text, "[10%]", "the earlier forced value survives a bad argument")
+		fw.eq(text, "Dampening [10%]", "the earlier forced value survives a bad argument")
 	end)
 
 	fw.it("clamps an out-of-range value instead of letting it overflow the display", function()
 		SlashCmdList.MINIDAMPEN("dampening -50")
 
-		fw.eq(StripColor(env.Addon.Display.DampeningBlock.Value:GetText()), "[0%]", "negative clamps to zero")
+		fw.eq(StripColor(env.Addon.Display.DampeningBlock.Value:GetText()), "Dampening [0%]", "negative clamps to zero")
 
 		SlashCmdList.MINIDAMPEN("dampening 100000")
 
-		fw.eq(StripColor(env.Addon.Display.DampeningBlock.Value:GetText()), "[999%]", "an overflow clamps to the display's ceiling")
+		fw.eq(StripColor(env.Addon.Display.DampeningBlock.Value:GetText()), "Dampening [999%]", "an overflow clamps to the display's ceiling")
 
 		SlashCmdList.MINIDAMPEN("dampening clear")
 	end)

@@ -8,17 +8,15 @@ local BLOCK_HEIGHT = 20
 local ROW_GAP = 24
 -- The counts or round record, the solo shuffle round line, then dampening.
 local MAX_ROWS = 3
--- Fixed gap after a legend, so nothing that follows it is ever crowded by a long label.
-local VALUE_GAP = 8
 local MAX_ROUNDS = 6
-local DAMPENING_LEGEND = "Dampening"
 -- Widest text each row can produce, measured but never drawn, so the block width never jitters
 -- as the live value's character count changes tick to tick.
 local WIDEST_COUNTS_VALUE = "3? vs 3?"
 local WIDEST_ROUNDS_VALUE = "6W - 6L?"
 local WIDEST_ROUND_LINE = "Round 6/6"
--- Reserves room for a three digit percent plus a forced value's brackets, both expected readings.
-local WIDEST_DAMPENING_VALUE = "[300%]"
+local DAMPENING_LABEL = "Dampening"
+-- Reserves room for the label, a three digit percent, and a forced value's brackets.
+local WIDEST_DAMPENING_LINE = DAMPENING_LABEL .. " [300%]"
 -- Sample content drawn everywhere while testing, so the display can be positioned without a
 -- real match.
 local SAMPLE_STATE = {
@@ -93,24 +91,15 @@ local function ColorText(text, color)
 end
 
 ---Centres the content inside a slot reserved at contentWidth, so a reading shorter than the
----widest placeholder does not hug the legend.
+---widest placeholder does not hug the row's own left edge.
 ---@return number the row's width
-local function LayoutRow(block, legendText, region, contentWidth)
-	block.Legend:SetText(legendText)
-
-	local hasLegend = legendText ~= ""
-	local legendWidth = hasLegend and block.Legend:GetStringWidth() or 0
-	local gap = hasLegend and VALUE_GAP or 0
-
-	-- Measured from the row's own left rather than the legend's right, so a blank legend needs
-	-- no zero-width string to anchor against.
+local function LayoutRow(block, region, contentWidth)
 	region:ClearAllPoints()
-	region:SetPoint("CENTER", block.Frame, "LEFT", legendWidth + gap + contentWidth / 2, 0)
+	region:SetPoint("CENTER", block.Frame, "LEFT", contentWidth / 2, 0)
 
-	local rowWidth = legendWidth + gap + contentWidth
-	block.Frame:SetWidth(rowWidth)
+	block.Frame:SetWidth(contentWidth)
 
-	return rowWidth
+	return contentWidth
 end
 
 local function CountsMode(effState)
@@ -201,15 +190,15 @@ local function DampeningValueText(value)
 	local forced = forcedDampening ~= nil and not state.inScope
 	local shown = forced and forcedDampening or value
 	local color = { Colors:ForDampening(shown) }
-	local text = ColorText(shown .. "%", color)
+	local percent = ColorText(shown .. "%", color)
 
 	if forced then
 		-- Brackets sit outside the coloured span deliberately, in the default text colour, so
 		-- a forced reading can never be mistaken for the plain percent a live one draws.
-		return "[" .. text .. "]"
+		percent = "[" .. percent .. "]"
 	end
 
-	return text
+	return DAMPENING_LABEL .. " " .. percent
 end
 
 ---Swaps the sample halfway through each period, so the solo shuffle round record gets previewed too.
@@ -234,19 +223,19 @@ local function RenderCountsBlock(effState)
 
 	local widestValue = mode == "rounds" and WIDEST_ROUNDS_VALUE or WIDEST_COUNTS_VALUE
 
-	return LayoutRow(countsBlock, "", countsBlock.Value, MeasureWidth(countsBlock, widestValue))
+	return LayoutRow(countsBlock, countsBlock.Value, MeasureWidth(countsBlock, widestValue))
 end
 
 local function RenderRoundBlock(effState)
 	roundBlock.Value:SetText(RoundLineText(effState))
 
-	return LayoutRow(roundBlock, "", roundBlock.Value, MeasureWidth(roundBlock, WIDEST_ROUND_LINE))
+	return LayoutRow(roundBlock, roundBlock.Value, MeasureWidth(roundBlock, WIDEST_ROUND_LINE))
 end
 
 local function RenderDampeningBlock(value)
 	dampeningBlock.Value:SetText(DampeningValueText(value))
 
-	return LayoutRow(dampeningBlock, DAMPENING_LEGEND, dampeningBlock.Value, MeasureWidth(dampeningBlock, WIDEST_DAMPENING_VALUE))
+	return LayoutRow(dampeningBlock, dampeningBlock.Value, MeasureWidth(dampeningBlock, WIDEST_DAMPENING_LINE))
 end
 
 local function AddRow(block, width)
@@ -293,7 +282,6 @@ local function ApplyFonts()
 	local object = Fonts:Object(db.FontFace, db.FontSize, db.FontOutline)
 
 	for _, block in ipairs(allBlocks) do
-		ApplyFontObject(block.Legend, object)
 		ApplyFontObject(block.Value, object)
 		ApplyFontObject(block.Measure, object)
 	end
@@ -324,20 +312,16 @@ local function BuildBlock(parent, frameName)
 	local frame = CreateFrame("Frame", frameName, parent)
 	frame:SetHeight(BLOCK_HEIGHT)
 
-	local legend = frame:CreateFontString(nil, "OVERLAY")
-	legend:SetPoint("LEFT", frame, "LEFT", 0, 0)
-
 	local value = frame:CreateFontString(nil, "OVERLAY")
-	value:SetPoint("LEFT", legend, "RIGHT", VALUE_GAP, 0)
+	value:SetPoint("LEFT", frame, "LEFT", 0, 0)
 
 	-- Never shown: exists only so GetStringWidth() can be asked about a placeholder without
-	-- disturbing whatever text the legend or value is actually displaying.
+	-- disturbing whatever text the value is actually displaying.
 	local measure = frame:CreateFontString(nil, "OVERLAY")
 	measure:Hide()
 
 	return {
 		Frame = frame,
-		Legend = legend,
 		Value = value,
 		Measure = measure,
 	}
