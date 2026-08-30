@@ -40,6 +40,9 @@ function M:Init()
 	local columns = 2
 	local columnStep = mini:ColumnWidth(columns, horizontalSpacing, 0)
 
+	-- The three switches share one row, so they get their own narrower column step.
+	local switchStep = mini:ColumnWidth(3, horizontalSpacing, 0)
+
 	local header = mini:PanelHeader({
 		Parent = panel,
 		Description = "Shows a team alive-count, the current dampening percentage, and your solo shuffle round record in arena.",
@@ -75,7 +78,7 @@ function M:Init()
 	})
 
 	lockedChk:SetPoint("TOP", enabledChk, "TOP", 0, 0)
-	lockedChk:SetPoint("LEFT", panel, "LEFT", columnStep, 0)
+	lockedChk:SetPoint("LEFT", panel, "LEFT", switchStep, 0)
 
 	local hideWidgetsChk = mini:Checkbox({
 		Parent = panel,
@@ -90,14 +93,15 @@ function M:Init()
 		end,
 	})
 
-	hideWidgetsChk:SetPoint("TOPLEFT", enabledChk, "BOTTOMLEFT", 0, -verticalSpacing)
+	hideWidgetsChk:SetPoint("TOP", enabledChk, "TOP", 0, 0)
+	hideWidgetsChk:SetPoint("LEFT", panel, "LEFT", switchStep * 2, 0)
 
 	local appearanceDivider = mini:Divider({
 		Parent = panel,
 		Text = "Appearance",
 	})
 
-	appearanceDivider:SetPoint("TOP", hideWidgetsChk, "BOTTOM", 0, -verticalSpacing)
+	appearanceDivider:SetPoint("TOP", enabledChk, "BOTTOM", 0, -verticalSpacing)
 	appearanceDivider:SetPoint("LEFT", panel, "LEFT")
 	appearanceDivider:SetPoint("RIGHT", panel, "RIGHT", -horizontalSpacing, 0)
 
