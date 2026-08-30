@@ -98,8 +98,19 @@ local function CheckPanelButtonsAndReset(context)
 	fw.eq(relativeTo, reset, "anchored off the reset button")
 	fw.eq(relativePoint, "LEFT", "onto the reset button's left edge")
 
-	fw.not_nil(FindCheckbox(context, "Enabled"), "FindCheckbox can find a checkbox that is actually there")
+	local enabledChk = FindCheckbox(context, "Enabled")
+	local hideChk = FindCheckbox(context, "Hide Blizzard")
+
+	fw.not_nil(enabledChk, "FindCheckbox can find a checkbox that is actually there")
 	fw.is_nil(FindCheckbox(context, "Locked"), "the Locked checkbox is gone from the panel")
+	fw.not_nil(hideChk, "the Hide Blizzard toggle exists")
+
+	local hidePoint, hideRelativeTo, hideRelativePoint = hideChk:GetPoint(1)
+
+	fw.eq(hideChk:GetNumPoints(), 1, "one point, so the pair shares a single row centre")
+	fw.eq(hidePoint, "LEFT", "the Hide Blizzard toggle's own anchor point")
+	fw.eq(hideRelativeTo, enabledChk.Text, "anchored off the Enabled label")
+	fw.eq(hideRelativePoint, "RIGHT", "onto that label's right edge, not a column across")
 
 	fw.falsy(context.Addon.Display:IsTestMode(), "test mode starts off")
 

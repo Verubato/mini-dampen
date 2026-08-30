@@ -90,8 +90,9 @@ function M:Init()
 		end,
 	})
 
-	hideWidgetsChk:SetPoint("TOP", enabledChk, "TOP", 0, 0)
-	hideWidgetsChk:SetPoint("LEFT", panel, "LEFT", columnStep, 0)
+	-- Both switches are short enough to share one column, so the second follows the first's
+	-- label rather than starting the next column across.
+	hideWidgetsChk:SetPoint("LEFT", enabledChk.Text, "RIGHT", horizontalSpacing, 0)
 
 	local appearanceDivider = mini:Divider({
 		Parent = panel,
