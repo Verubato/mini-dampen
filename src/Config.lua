@@ -12,7 +12,7 @@ local dbDefaults = {
 	FontFace = false,
 	-- The look every existing user already has, so nothing moves under them.
 	FontOutline = "OUTLINE",
-	CountsAnchor = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -140 },
+	CountsAnchor = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -20 },
 }
 ---@class Config
 local M = {}
