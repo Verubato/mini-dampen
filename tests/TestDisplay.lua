@@ -418,37 +418,42 @@ fw.describe("MiniDampen - container layout", function()
 		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 44, "the container holds two rows, not three")
 	end)
 
-	fw.it("keeps the container at the height its one backdrop was built for", function()
+	fw.it("sizes the container for all three rows while unlocked", function()
 		_G.MiniDampenDB.Locked = false
 		env.Addon.Display:Refresh()
 
-		fw.truthy(env.Addon.Display.Container.PreviewBackdrop:IsVisible(), "the backdrop is up while unlocked")
 		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 68, "three rows drawn while unlocked")
-
-		_G.MiniDampenDB.Locked = true
-		env.Addon.Display:Refresh()
-
-		fw.falsy(env.Addon.Display.Container.PreviewBackdrop:IsVisible(), "and gone once locked, so it never frames a live reading")
 	end)
 end)
 
-fw.describe("MiniDampen - preview affordance", function()
+fw.describe("MiniDampen - unlocked display", function()
 	local env
 
 	fw.before_each(function()
 		env = Arena.Build()
 	end)
 
-	fw.it("shows the preview backdrop and label only while unlocked", function()
-		_G.MiniDampenDB.Locked = true
-		env.Addon.Display:Refresh()
-
-		fw.falsy(env.Addon.Display.Container.PreviewLabel:IsShown(), "hidden while locked")
-
+	fw.it("draws no preview backdrop or caption, and sizes the same as a locked frame drawing the same three rows", function()
 		_G.MiniDampenDB.Locked = false
+		-- Lands the sample in its round-record half, to match the locked side's solo shuffle mode below.
+		env.Tick(10)
 		env.Addon.Display:Refresh()
 
-		fw.truthy(env.Addon.Display.Container.PreviewLabel:IsShown(), "shown while unlocked")
+		fw.is_nil(env.Addon.Display.Container.PreviewBackdrop, "no preview backdrop object exists")
+		fw.is_nil(env.Addon.Display.Container.PreviewLabel, "no preview caption object exists")
+
+		local unlockedWidth = env.Addon.Display.Container.Frame:GetWidth()
+
+		local locked = Arena.Build()
+		locked.SoloShuffle = true
+		locked.Enter()
+		locked.SetState(2) -- StartUp
+		locked.SetState(3) -- Engaged, so the round line has a number to draw
+		locked.SetDampening(10)
+		locked.Tick(0.5)
+
+		fw.eq(locked.Addon.Display.Container.Frame:GetWidth(), unlockedWidth,
+			"unlocked draws no wider than locked draws for the same three rows")
 	end)
 
 	fw.it("stays draggable while unlocked with no arena entered", function()
@@ -699,12 +704,5 @@ fw.describe("MiniDampen - refresh before init", function()
 
 		fw.truthy(ok, "a refresh before Init is a no-op, not an error: " .. tostring(err))
 		fw.truthy(env.Addon.Display.Container == nil, "and it built nothing on the way through")
-	end)
-
-	fw.it("gives the preview label a font at build time, since it draws text there", function()
-		local env = Arena.Build()
-
-		fw.truthy(env.Addon.Display.Container.PreviewLabel.__template ~= nil,
-			"SetText refuses a string with no font, and this one is written before any font pass")
 	end)
 end)

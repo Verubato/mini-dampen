@@ -7,10 +7,7 @@ local Arena = require("Arena")
 
 local DEFAULT_FACE_FILE = "Fonts\\FRIZQT__.TTF"
 
----One entry per fontstring the four font sites touch: every row's Legend, Value and Measure,
----plus the preview label. Wrapped in a sub-table rather than returned as a bare list, since a
----bare list with a nil GetFontObject() result (the preview label before its first font is
----applied) leaves a hole the # operator cannot be trusted to count past.
+---One entry per fontstring the four font sites touch: every row's Legend, Value and Measure.
 local function FontSites(display)
 	return {
 		{ Name = "counts legend", Object = display.CountsBlock.Legend:GetFontObject() },
@@ -22,7 +19,6 @@ local function FontSites(display)
 		{ Name = "dampening legend", Object = display.DampeningBlock.Legend:GetFontObject() },
 		{ Name = "dampening value", Object = display.DampeningBlock.Value:GetFontObject() },
 		{ Name = "dampening measure", Object = display.DampeningBlock.Measure:GetFontObject() },
-		{ Name = "preview label", Object = display.Container.PreviewLabel:GetFontObject() },
 	}
 end
 
@@ -44,7 +40,7 @@ fw.describe("MiniDampen - font face application", function()
 		env.Addon.Display:Refresh()
 	end)
 
-	fw.it("changes the object on every row's Legend, Value and Measure, and on the preview label", function()
+	fw.it("changes the object on every row's Legend, Value and Measure", function()
 		local display = env.Addon.Display
 		local before = FontSites(display)
 
@@ -53,7 +49,7 @@ fw.describe("MiniDampen - font face application", function()
 
 		local after = FontSites(display)
 
-		fw.eq(#after, 10, "fixture: still asking about every font site")
+		fw.eq(#after, 9, "fixture: still asking about every font site")
 
 		for i = 1, #before do
 			fw.truthy(after[i].Object ~= nil, after[i].Name .. " picked up a real object")
@@ -104,31 +100,6 @@ fw.describe("MiniDampen - font face application", function()
 			fw.eq(member.height, 22, "at the size asked for")
 			fw.eq(member.flags, "THICKOUTLINE", "at the flags asked for")
 		end
-	end)
-
-	fw.it("does not touch SetFontObject or SetText on a fontstring the font pass already settled, on a re-apply with nothing changed", function()
-		-- The preview label's own text never changes elsewhere in a Refresh, unlike every row's
-		-- Legend, Value and Measure, so it is the one fontstring where a call here can only have
-		-- come from the guard this test is proving.
-		local label = env.Addon.Display.Container.PreviewLabel
-		local objectCalls, textCalls = 0, 0
-		local originalSetFontObject = label.SetFontObject
-		local originalSetText = label.SetText
-
-		label.SetFontObject = function(self, ...)
-			objectCalls = objectCalls + 1
-			return originalSetFontObject(self, ...)
-		end
-
-		label.SetText = function(self, ...)
-			textCalls = textCalls + 1
-			return originalSetText(self, ...)
-		end
-
-		env.Addon.Display:Refresh()
-
-		fw.eq(objectCalls, 0, "the guard skips a redundant SetFontObject")
-		fw.eq(textCalls, 0, "and the SetText churn behind it never runs either")
 	end)
 end)
 
@@ -204,12 +175,12 @@ fw.describe("MiniDampen - font dropdown items", function()
 		_G.MiniDampenDB.FontFace = "Expressway"
 		env.Addon.Display:Refresh()
 
-		local drawnBefore = env.Addon.Display.Container.PreviewLabel:GetFontObject()
+		local drawnBefore = env.Addon.Display.CountsBlock.Value:GetFontObject()
 
 		env.RegisterFont("Expressway", "Interface\\AddOns\\SomeMediaPack\\expressway.ttf")
 		env.Tick(0)
 
-		local drawnAfter = env.Addon.Display.Container.PreviewLabel:GetFontObject()
+		local drawnAfter = env.Addon.Display.CountsBlock.Value:GetFontObject()
 
 		fw.truthy(drawnAfter ~= drawnBefore, "the rows picked up the face without waiting for an arena")
 	end)

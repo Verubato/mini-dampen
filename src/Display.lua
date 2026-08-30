@@ -1,7 +1,6 @@
 local addonName, addon = ...
 ---@type MiniFramework
 local mini = addon.Framework
-local GUI = mini.GUI
 local Colors = addon.Colors
 local Fonts = addon.Fonts
 local BLOCK_HEIGHT = 20
@@ -51,18 +50,6 @@ local SAMPLE_PERIOD = 20
 local PREVIEW_DAMPENING = 50
 -- Only has to catch the sample swap, which is ten seconds wide.
 local UNLOCKED_REFRESH_INTERVAL = 1
--- Distinct from every dampening tier colour, so the border never reads as part of the reading
--- it is warning about.
-local PREVIEW_BORDER = { r = 0.81, g = 0.66, b = 0.31 }
-local PREVIEW_FILL = { r = 0.12, g = 0.11, b = 0.10 }
-local PREVIEW_FILL_ALPHA = 0.55
--- Below every row's own size, so the caption never competes with the rows it labels.
-local PREVIEW_LABEL_FONT_SIZE = 10
--- Extra room the backdrop gets on both sides of the widest visible row, so the border never
--- hugs the text edge to edge.
-local PREVIEW_PADDING = 14
--- Room above and below the rows, so the border never sits right on the text.
-local PREVIEW_BACKDROP_PADDING = 6
 local DEFAULT_COUNTS_ANCHOR = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -140 }
 local db
 local state
@@ -274,7 +261,7 @@ local function ContainerHeight(rows)
 end
 
 ---Stacks rows from the container's top down.
-local function LayoutContainer(rows, unlocked)
+local function LayoutContainer(rows)
 	local width = 1
 
 	for i, row in ipairs(rows) do
@@ -286,7 +273,7 @@ local function LayoutContainer(rows, unlocked)
 
 	container.Frame:SetHeight(ContainerHeight(#rows))
 
-	container.Frame:SetWidth(width + (unlocked and PREVIEW_PADDING or 0))
+	container.Frame:SetWidth(width)
 	container.Frame:SetShown(#rows > 0)
 end
 
@@ -298,16 +285,6 @@ local function ApplyFontObject(fontString, object)
 	end
 
 	fontString:SetFontObject(object)
-
-	-- A string keeps drawing its old glyphs after SetFontObject until something dirties it.
-	-- Every row's Legend, Value and Measure gets a fresh SetText later in the same Refresh
-	-- regardless, but the preview label's text never changes, so it needs the nudge here.
-	local text = fontString:GetText()
-
-	if text ~= nil and text ~= "" then
-		fontString:SetText("")
-		fontString:SetText(text)
-	end
 end
 
 local function ApplyFonts()
@@ -318,8 +295,6 @@ local function ApplyFonts()
 		ApplyFontObject(block.Value, object)
 		ApplyFontObject(block.Measure, object)
 	end
-
-	ApplyFontObject(container.PreviewLabel, Fonts:Object(db.FontFace, PREVIEW_LABEL_FONT_SIZE, db.FontOutline))
 end
 
 ---SetAlpha rather than Hide, because UIWidgetTopCenterContainerFrame's own visibility gate
@@ -341,11 +316,6 @@ local function ApplyWidgetDimming(inScope)
 		widgetContainer:SetAlpha(preexistingAlpha)
 		didWeHide = false
 	end
-end
-
-local function SetPreviewShown(target, shown)
-	target.PreviewFrame:SetShown(shown)
-	target.PreviewLabel:SetShown(shown)
 end
 
 local function BuildBlock(parent, frameName)
@@ -371,56 +341,16 @@ local function BuildBlock(parent, frameName)
 	}
 end
 
----Bordered and tinted, shown only while unlocked, so sample content can never be mistaken for
----a live reading.
-local function BuildPreviewBackdrop(parent, containerHeight)
-	local box = CreateFrame("Frame", nil, parent)
-	box:SetAllPoints(parent)
-
-	local field = GUI.RoundedField(box, containerHeight + PREVIEW_BACKDROP_PADDING, "BACKGROUND")
-	field.Fill:SetColor(PREVIEW_FILL.r, PREVIEW_FILL.g, PREVIEW_FILL.b, PREVIEW_FILL_ALPHA)
-	field.Border:SetColor(PREVIEW_BORDER.r, PREVIEW_BORDER.g, PREVIEW_BORDER.b, 1)
-
-	return box
-end
-
 ---Builds the single draggable frame every row sits on.
 local function BuildContainer(frameName, anchorDb, defaultAnchor)
 	local frame = CreateFrame("Frame", frameName, UIParent)
 
-	-- A dedicated child, so the whole backdrop toggles with one SetShown instead of touching
-	-- GUI.RoundedField's ThreeSlice pieces, which Namespace.lua marks as not public API.
-	local previewFrame = CreateFrame("Frame", nil, frame)
-	previewFrame:SetAllPoints(frame)
-	-- BACKGROUND strata keeps it behind the rows' own text regardless of frame level.
-	previewFrame:SetFrameStrata("BACKGROUND")
-
-	-- The art bakes its height in. One backdrop only fits because the preview always draws every
-	-- row.
-	local previewBackdrop = BuildPreviewBackdrop(previewFrame, ContainerHeight(MAX_ROWS))
-
-	-- Inherits a font because it is the one string drawn text here at build time, and SetText
-	-- refuses a string with no font set. ApplyFonts replaces the object on its first pass.
-	local previewLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	previewLabel:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 2)
-	previewLabel:SetText("PREVIEW")
-	previewLabel:SetTextColor(PREVIEW_BORDER.r, PREVIEW_BORDER.g, PREVIEW_BORDER.b, 1)
-
 	mini:MakeMovable(frame, anchorDb, { IsLocked = function() return db.Locked end })
 	mini:ApplyPosition(frame, anchorDb, defaultAnchor)
 
-	local built = {
+	return {
 		Frame = frame,
-		PreviewFrame = previewFrame,
-		PreviewLabel = previewLabel,
-		PreviewBackdrop = previewBackdrop,
 	}
-
-	-- Otherwise the container draws a PREVIEW caption at width 0 for the moment between Init
-	-- and the first Refresh.
-	SetPreviewShown(built, false)
-
-	return built
 end
 
 local function ApplyUnlockedTicker(unlocked)
@@ -479,7 +409,6 @@ function M:Refresh()
 	dampeningBlock.Frame:SetShown(showDampening)
 
 	mini:SetPositionLocked(container.Frame, db.Locked)
-	SetPreviewShown(container, unlocked)
 
 	wipe(visibleRows)
 
@@ -495,7 +424,7 @@ function M:Refresh()
 		AddRow(dampeningBlock, RenderDampeningBlock(dampeningValue))
 	end
 
-	LayoutContainer(visibleRows, unlocked)
+	LayoutContainer(visibleRows)
 end
 
 function M:Init()
