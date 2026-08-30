@@ -18,6 +18,7 @@ local dbDefaults = {
 local M = {}
 addon.Config = M
 
+M.DbDefaults = dbDefaults
 -- Read by tests. Set once in Init and never replaced.
 M.Panel = nil
 M.FontItems = nil
@@ -50,6 +51,13 @@ function M:Init()
 		Test = {
 			OnClick = function()
 				addon.Display:SetTestMode(not addon.Display:IsTestMode())
+			end,
+		},
+		Reset = {
+			OnAccept = function()
+				mini:ResetSavedVars(dbDefaults)
+				addon.Display:ApplyPosition()
+				addon:Refresh()
 			end,
 		},
 	})

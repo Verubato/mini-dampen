@@ -103,8 +103,9 @@ dampening percentage, and your solo shuffle round record in arena."
 | Font | dropdown | Game Default | The face every row draws in. Lists the client's own faces plus anything another addon has registered with LibSharedMedia-3.0. |
 | Outline | dropdown | Outline | None, Outline, or Thick outline. |
 
-The panel header also carries a Test button, which toggles test mode (sample data,
-draggable).
+The panel header also carries two buttons: Test toggles test mode (sample data, draggable),
+and Reset to Defaults restores every setting above and the display's position, after a
+confirmation prompt.
 
 ## Troubleshooting
 

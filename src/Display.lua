@@ -50,7 +50,7 @@ local SAMPLE_PERIOD = 20
 local PREVIEW_DAMPENING = 50
 -- Only has to catch the sample swap, which is ten seconds wide.
 local TEST_REFRESH_INTERVAL = 1
-local DEFAULT_COUNTS_ANCHOR = { Point = "TOP", RelativeTo = "UIParent", RelativePoint = "TOP", X = 0, Y = -140 }
+local DEFAULT_COUNTS_ANCHOR
 local db
 local state
 local initialised = false
@@ -393,6 +393,16 @@ function M:IsTestMode()
 	return testMode
 end
 
+---Re-anchors the container from its saved position, for a caller that just changed
+---db.CountsAnchor without a drag, such as a reset to defaults.
+function M:ApplyPosition()
+	if not initialised then
+		return
+	end
+
+	mini:ApplyPosition(container.Frame, db.CountsAnchor, DEFAULT_COUNTS_ANCHOR)
+end
+
 function M:Refresh()
 	-- SetForcedDampening, SetTestMode and the test ticker reach this without going through
 	-- addon:Refresh.
@@ -443,6 +453,7 @@ end
 function M:Init()
 	db = mini:GetSavedVars()
 	state = addon.MatchState.State
+	DEFAULT_COUNTS_ANCHOR = addon.Config.DbDefaults.CountsAnchor
 
 	container = BuildContainer(addonName .. "Frame", db.CountsAnchor, DEFAULT_COUNTS_ANCHOR)
 	countsBlock = BuildBlock(container.Frame, addonName .. "CountsFrame")
