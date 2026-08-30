@@ -11,6 +11,9 @@ local function CheckNoArenaEventsAfterLogin(context)
 	for _, frame in ipairs(context.Mock.Frames) do
 		fw.falsy(frame.__events["ARENA_OPPONENT_UPDATE"], "no frame left ARENA_OPPONENT_UPDATE registered")
 	end
+
+	fw.eq(context.Addon.Framework.CustomStyling, true, "custom styling on")
+	fw.eq(context.Addon.Framework.CustomStylingOverrides.Button, false, "stock buttons")
 end
 
 smoke.Run("MiniDampen", { extra = CheckNoArenaEventsAfterLogin })
