@@ -50,6 +50,7 @@ function M:Init()
 		Parent = panel,
 		Description = "Shows a team alive-count, the current dampening percentage, and your solo shuffle round record in arena.",
 		Gap = 6,
+		Divider = true,
 	})
 
 	local enabledChk = mini:Checkbox({
