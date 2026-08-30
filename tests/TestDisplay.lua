@@ -113,6 +113,24 @@ fw.describe("MiniDampen - counts value text", function()
 
 		fw.eq(text, "3 vs 3", "the ? clears once the read is readable again, not left latched")
 	end)
+
+	fw.it("colours a side by who it is, not by its alive fraction", function()
+		env.Kill("party1")
+		env.Kill("party2")
+		env.Tick(0.5)
+		env.Addon.Display:Refresh()
+
+		local text = env.Addon.Display.CountsBlock.Value:GetText()
+
+		fw.truthy(
+			text:find(ColorCode(env.Addon.Colors.COUNT_ALLY) .. "1", 1, true) ~= nil,
+			"a 1-alive-of-3 ally, which used to read a critical red, still reads the ally green"
+		)
+		fw.truthy(
+			text:find(ColorCode(env.Addon.Colors.COUNT_ENEMY) .. "3", 1, true) ~= nil,
+			"a full-strength 3-alive-of-3 enemy, which used to read the full green, now reads the enemy red"
+		)
+	end)
 end)
 
 fw.describe("MiniDampen - round record value text", function()

@@ -111,8 +111,8 @@ local function CountsMode(effState)
 end
 
 local function CountsValueText(effState)
-	local allyAlive, allyTotal, allyHidden = 0, #effState.ally, false
-	local enemyAlive, enemyTotal, enemyHidden = 0, #effState.enemy, false
+	local allyAlive, allyHidden = 0, false
+	local enemyAlive, enemyHidden = 0, false
 
 	for _, entry in ipairs(effState.ally) do
 		if entry.Alive and not entry.Cleared then
@@ -136,10 +136,8 @@ local function CountsValueText(effState)
 		end
 	end
 
-	local allyColor = { Colors:ForCount(allyAlive, allyTotal) }
-	local enemyColor = { Colors:ForCount(enemyAlive, enemyTotal) }
-	local allyText = ColorText(tostring(allyAlive), allyColor)
-	local enemyText = ColorText(tostring(enemyAlive), enemyColor)
+	local allyText = ColorText(tostring(allyAlive), Colors.COUNT_ALLY)
+	local enemyText = ColorText(tostring(enemyAlive), Colors.COUNT_ENEMY)
 
 	if allyHidden then
 		allyText = allyText .. ColorText("?", Colors.COUNT_HIDDEN)

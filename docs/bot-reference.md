@@ -79,6 +79,9 @@ Each row is centred independently on the display:
 Dampening 10%
 ```
 
+The counts row colours each side by who it is rather than by how many are left: your team's
+count always reads green, the enemy's always red.
+
 Solo shuffle swaps the top row for the round record, with the round line below it. The win
 count is drawn green, the loss count red. The round line's own `6/6` reads yellow, apart from
 its "Round" label. The record row carries no fraction of its own, since a shuffle is always

@@ -1,8 +1,6 @@
 local _, addon = ...
 local COUNT_FULL = { 0.20, 0.90, 0.30 }
 local COUNT_HURT = { 1.00, 0.82, 0.20 }
-local COUNT_CRITICAL = { 1.00, 0.30, 0.25 }
-local COUNT_WIPED = { 0.45, 0.45, 0.45 }
 -- The "?" marker drawn when an opponent is behind cover.
 local COUNT_HIDDEN = { 0.65, 0.65, 0.72 }
 -- { percent, r, g, b }, ascending by percent. ForDampening interpolates between neighbours.
@@ -17,41 +15,22 @@ local ROUND_WON = COUNT_FULL
 local ROUND_LOST = { 0.85, 0.20, 0.20 }
 -- Set apart from the "Round" label beside it, so the number is what the eye lands on.
 local ROUND_NUMBER = COUNT_HURT
+-- A team down a member should not read as if it were in trouble.
+local COUNT_ALLY = COUNT_FULL
+local COUNT_ENEMY = ROUND_LOST
 ---@class Colors
 local M = {}
 addon.Colors = M
 
-M.COUNT_FULL = COUNT_FULL
-M.COUNT_HURT = COUNT_HURT
-M.COUNT_CRITICAL = COUNT_CRITICAL
-M.COUNT_WIPED = COUNT_WIPED
 M.COUNT_HIDDEN = COUNT_HIDDEN
 M.ROUND_WON = ROUND_WON
 M.ROUND_LOST = ROUND_LOST
 M.ROUND_NUMBER = ROUND_NUMBER
+M.COUNT_ALLY = COUNT_ALLY
+M.COUNT_ENEMY = COUNT_ENEMY
 
 local function Lerp(a, b, t)
 	return a + (b - a) * t
-end
-
----Picks a colour from the alive fraction, so 2v2 and 3v3 both land on the same four states.
----@return number r, number g, number b
-function M:ForCount(alive, total)
-	if not total or total <= 0 then
-		return unpack(COUNT_WIPED)
-	end
-
-	local fraction = alive / total
-
-	if fraction <= 0 then
-		return unpack(COUNT_WIPED)
-	elseif fraction < 0.5 then
-		return unpack(COUNT_CRITICAL)
-	elseif fraction < 1 then
-		return unpack(COUNT_HURT)
-	end
-
-	return unpack(COUNT_FULL)
 end
 
 ---Interpolates a colour across DAMPENING_STOPS, clamping outside the first and last stop.

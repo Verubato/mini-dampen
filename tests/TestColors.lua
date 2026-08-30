@@ -16,22 +16,10 @@ local function assertColor(actual, expected, label)
 	fw.eq(ab, eb, label .. " b")
 end
 
-fw.describe("MiniDampen - Colors:ForCount", function()
-	fw.it("returns full, hurt, critical, wiped across 3v3", function()
-		assertColor({ Colors:ForCount(3, 3) }, Colors.COUNT_FULL, "3/3")
-		assertColor({ Colors:ForCount(2, 3) }, Colors.COUNT_HURT, "2/3")
-		assertColor({ Colors:ForCount(1, 3) }, Colors.COUNT_CRITICAL, "1/3")
-		assertColor({ Colors:ForCount(0, 3) }, Colors.COUNT_WIPED, "0/3")
-	end)
-
-	fw.it("returns full, hurt, wiped across 2v2, proving it is fraction-based", function()
-		assertColor({ Colors:ForCount(2, 2) }, Colors.COUNT_FULL, "2/2")
-		assertColor({ Colors:ForCount(1, 2) }, Colors.COUNT_HURT, "1/2")
-		assertColor({ Colors:ForCount(0, 2) }, Colors.COUNT_WIPED, "0/2")
-	end)
-
-	fw.it("does not divide by zero", function()
-		assertColor({ Colors:ForCount(0, 0) }, Colors.COUNT_WIPED, "0/0")
+fw.describe("MiniDampen - counts row colour aliasing", function()
+	fw.it("aliases ally and enemy to the existing round-won and round-lost tables, not fresh ones", function()
+		fw.truthy(Colors.COUNT_ALLY == Colors.ROUND_WON, "ally is the same table as ROUND_WON")
+		fw.truthy(Colors.COUNT_ENEMY == Colors.ROUND_LOST, "enemy is the same table as ROUND_LOST")
 	end)
 end)
 
