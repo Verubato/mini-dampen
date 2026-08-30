@@ -6,6 +6,7 @@
 ## Version: 1.0.0
 ## SavedVariables: MiniDampenDB
 ## IconTexture: Interface\AddOns\MiniDampen\Icon.blp
+## X-Curse-Project-ID: 1673996
 
 Libs\MiniFramework\MiniFramework.xml
 Config.lua
