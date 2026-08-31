@@ -414,6 +414,63 @@ fw.describe("MiniDampen - round settling", function()
 		fw.eq(env.Addon.MatchState.State.roundResults[1], "win", "a later alive reading can't rewrite the stored result")
 	end)
 
+	fw.it("calls it a shuffle when the client only answers true after the scope has opened", function()
+		-- The scope opens as early as the prep room, so a reading taken once at OpenScope is
+		-- taken before the client necessarily has the match data to answer with.
+		local fresh = Arena.Build()
+		fresh.SoloShuffle = false
+		fresh.Enter()
+
+		fw.falsy(fresh.Addon.MatchState.State.isSoloShuffle, "nothing to go on when the scope opened")
+
+		fresh.SoloShuffle = true
+		fresh.Tick(0.5)
+
+		fw.truthy(fresh.Addon.MatchState.State.isSoloShuffle, "the poll picked it up")
+	end)
+
+	fw.it("calls it a shuffle on a match state change without waiting for the next poll", function()
+		local fresh = Arena.Build()
+		fresh.SoloShuffle = false
+		fresh.Enter()
+		fresh.SoloShuffle = true
+		fresh.SetState(2) -- StartUp, with no Tick in between
+
+		fw.truthy(fresh.Addon.MatchState.State.isSoloShuffle, "read on the transition too")
+	end)
+
+	fw.it("holds the shuffle flag once seen, so a momentary false cannot drop the round record", function()
+		local fresh = Arena.Build()
+		fresh.SoloShuffle = true
+		fresh.Enter()
+		fresh.SoloShuffle = false
+		fresh.Tick(0.5)
+
+		fw.truthy(fresh.Addon.MatchState.State.isSoloShuffle, "held rather than flickering back to the counts row")
+	end)
+
+	fw.it("does not call a plain arena a shuffle on a secret reading", function()
+		local fresh = Arena.Build()
+		fresh.SoloShuffle = Arena.SECRET
+		fresh.Enter()
+		fresh.Tick(0.5)
+
+		fw.falsy(fresh.Addon.MatchState.State.isSoloShuffle, "a secret value is truthy, so it must be tested for true")
+	end)
+
+	fw.it("forgets the shuffle flag on leaving, so the next plain arena starts clean", function()
+		local fresh = Arena.Build()
+		fresh.SoloShuffle = true
+		fresh.Enter()
+		fresh.Tick(0.5)
+
+		fw.truthy(fresh.Addon.MatchState.State.isSoloShuffle, "set while in the shuffle")
+
+		fresh.Leave()
+
+		fw.falsy(fresh.Addon.MatchState.State.isSoloShuffle, "cleared with the rest of the scope")
+	end)
+
 	fw.it("leaves roundIndex nil when entering already Engaged with nothing to adopt", function()
 		-- A fresh env for this one: the shared before_each already entered at the default
 		-- Waiting state, and this case is specifically about never having observed StartUp.
@@ -980,6 +1037,23 @@ fw.describe("MiniDampen - Debug()", function()
 
 		fw.truthy(line:find("rawValue=25", 1, true) ~= nil, "the raw reading is named")
 		fw.truthy(line:find("rawSecret=false", 1, true) ~= nil, "readable, not secret")
+	end)
+
+	fw.it("reports both gates the round record hangs on, so a missing rounds row is diagnosable", function()
+		env.SoloShuffle = true
+		env.Enter()
+		env.SetState(2)
+		env.SetState(3)
+		env.SetWinner(0)
+		env.SetState(4)
+
+		local line = FindLine(env.Addon.MatchState:Debug(), "isSoloShuffle=")
+
+		fw.not_nil(line, "Debug() carries the round record gates")
+		fw.truthy(line:find("isSoloShuffle=true", 1, true) ~= nil, "the flag the display reads")
+		fw.truthy(line:find("rawIsSoloShuffle=true", 1, true) ~= nil, "and what the client itself answers")
+		fw.truthy(line:find("roundIndex=1", 1, true) ~= nil, "the other gate")
+		fw.truthy(line:find("results=win,", 1, true) ~= nil, "and the record so far")
 	end)
 
 	fw.it("routes every Debug() field through SafeString, so a secret value is never interpolated raw", function()

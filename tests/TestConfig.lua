@@ -57,9 +57,13 @@ fw.describe("MiniDampen - /minidampen debug", function()
 
 		SlashCmdList.MINIDAMPEN("debug")
 
-		-- Five fixed lines out of an arena: header, onScreenValues, teamSize, dampening, and
-		-- forcedDampening. No ally or enemy lines, since both rosters are empty outside a match.
-		fw.eq(#env.Context.Mock.State.Prints - before, 5, "one NotifyWithPrefix call per debug line")
+		-- Debug() is side-effect free, so asking it again is what keeps this from re-breaking
+		-- every time a line is added to it.
+		fw.eq(
+			#env.Context.Mock.State.Prints - before,
+			#env.Addon.MatchState:Debug(),
+			"one NotifyWithPrefix call per debug line"
+		)
 	end)
 
 	fw.it("works with no arena entered, matching the standing rule that a diagnostic is never combat- or scope-gated", function()

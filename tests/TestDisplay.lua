@@ -487,6 +487,24 @@ fw.describe("MiniDampen - container layout", function()
 		fw.eq(env.Addon.Display.Container.Frame:GetHeight(), 44, "the container holds two rows, not three")
 	end)
 
+	fw.it("draws the round record once the client calls it a shuffle after the scope opened", function()
+		-- The reported symptom: a shuffle whose rounds text never appears, because the flag was
+		-- read once in the prep room and the client had not answered yet.
+		local late = Arena.Build()
+		late.SoloShuffle = false
+		late.Enter()
+		late.SetState(2) -- StartUp
+		late.SetState(3) -- Engaged, so roundIndex is 1 and only the flag is missing
+
+		fw.falsy(late.Addon.Display.RoundBlock.Frame:IsShown(), "no round line while the client still says it is not a shuffle")
+
+		late.SoloShuffle = true
+		late.Tick(0.5)
+
+		fw.truthy(late.Addon.Display.RoundBlock.Frame:IsShown(), "the round line appears once the client answers")
+		fw.eq(StripColor(late.Addon.Display.RoundBlock.Value:GetText()), "Round 1/6", "reading the round it already counted")
+	end)
+
 	fw.it("sizes the container for all three rows while testing", function()
 		env.Addon.Display:SetTestMode(true)
 

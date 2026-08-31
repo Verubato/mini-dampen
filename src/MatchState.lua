@@ -109,10 +109,28 @@ local function ReadDampening()
 	end
 end
 
+---The scope opens as early as the prep room, where the client can still answer false while the
+---match data is arriving. The flag ratchets on only, so a momentary false cannot drop the
+---round record.
+local function ReadSoloShuffle()
+	if state.isSoloShuffle or type(C_PvP.IsSoloShuffle) ~= "function" then
+		return
+	end
+
+	local value = C_PvP.IsSoloShuffle()
+
+	-- A secret reading is truthy, so testing it for true is what keeps a normal arena from
+	-- drawing a round record it has no rounds for.
+	if not mini:IsSecret(value) and value == true then
+		state.isSoloShuffle = true
+	end
+end
+
 local function Poll()
 	ReadDeaths(state.ally)
 	ReadDeaths(state.enemy)
 	ExpireHidden(state.enemy)
+	ReadSoloShuffle()
 	ReadDampening()
 	Notify()
 end
@@ -372,6 +390,7 @@ local function OnMatchStateChanged()
 	local newState = C_PvP.GetActiveMatchState()
 
 	RefreshTeamSize()
+	ReadSoloShuffle()
 
 	if newState == Enum.PvPMatchState.Engaged and lastMatchState == Enum.PvPMatchState.StartUp then
 		state.roundIndex = math.min((state.roundIndex or 0) + 1, MAX_ROUNDS)
@@ -440,12 +459,13 @@ end
 
 local function OpenScope()
 	state.inScope = true
-	state.isSoloShuffle = (C_PvP.IsSoloShuffle and C_PvP.IsSoloShuffle()) or false
+	state.isSoloShuffle = false
 	teamSizeSeen = 0
 	state.teamSize = 0
 	state.ally = {}
 	state.enemy = {}
 	RefreshTeamSize()
+	ReadSoloShuffle()
 	state.dampening = nil
 	lastMatchState = C_PvP.GetActiveMatchState()
 
@@ -749,6 +769,35 @@ function M:Debug()
 		SafeString(opponents),
 		SafeString(specs),
 		SafeString(group)
+	)
+
+	-- Sits above the dampening line because that one calls the commentator API unguarded, and a
+	-- refusal there would cost the user the whole paste this line exists to give them.
+	local rawShuffle
+
+	if type(C_PvP.IsSoloShuffle) == "function" then
+		rawShuffle = C_PvP.IsSoloShuffle()
+	end
+
+	local bracket
+
+	if type(C_PvP.GetActiveMatchBracket) == "function" then
+		bracket = C_PvP.GetActiveMatchBracket()
+	end
+
+	local results = {}
+
+	for i = 1, MAX_ROUNDS do
+		results[i] = SafeString(state.roundResults[i])
+	end
+
+	lines[#lines + 1] = string.format(
+		"isSoloShuffle=%s rawIsSoloShuffle=%s bracket=%s roundIndex=%s results=%s",
+		SafeString(state.isSoloShuffle),
+		SafeString(rawShuffle),
+		SafeString(bracket),
+		SafeString(state.roundIndex),
+		table.concat(results, ",")
 	)
 
 	-- Mirrors ReadDampening's own guard order, so a secret reading is never indexed further
