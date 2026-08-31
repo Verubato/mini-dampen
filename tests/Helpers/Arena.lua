@@ -16,6 +16,10 @@ M.SECRET = setmetatable({}, {
 	end,
 })
 
+-- What the shared mock's UnitName("player") answers, so a scoreboard row can be authored to
+-- match the player.
+M.PLAYER_NAME = "Tester"
+
 ---A LibStub stand-in carrying only LibSharedMedia-3.0, backed by env.Media so a test can
 ---register a font the way another addon's media pack would, without vendoring the real library.
 ---@param env table
@@ -236,6 +240,34 @@ local function InstallOverrides(env)
 		return env.Bracket
 	end
 
+	_G.GetNumBattlefieldScores = function()
+		return #env.Scores
+	end
+
+	_G.RequestBattlefieldScoreData = function()
+		env.ScoreDataRequested = true
+	end
+
+	-- The stat carrying round wins sits at index 1, under an id that differs between matches,
+	-- so the row is shaped by position here too.
+	_G.C_PvP.GetScoreInfo = function(index)
+		local row = env.Scores[index]
+
+		if not row then
+			return nil
+		end
+
+		if row.Secret then
+			return M.SECRET
+		end
+
+		if row.NoStats then
+			return { name = row.Name }
+		end
+
+		return { name = row.Name, stats = { { pvpStatValue = row.Wins } } }
+	end
+
 	-- Derived from the clock rather than a field of its own, so advancing time during a
 	-- simulated reload keeps duration and time() moving together the way a real match does.
 	_G.C_PvP.GetActiveMatchDuration = function()
@@ -281,6 +313,10 @@ function M.Build(options)
 		MyFaction = 0,
 		Winner = nil,
 		Bracket = 1,
+		-- One row per player, each { Name = "...", Wins = 2 }, in the order GetScoreInfo hands
+		-- them out.
+		Scores = {},
+		ScoreDataRequested = false,
 		InstanceId = 1,
 		NextAuraSlot = 0,
 		AuraSlotsRefuses = false,
@@ -396,6 +432,11 @@ function M.Build(options)
 
 	function env.SetWinner(faction)
 		env.Winner = faction
+	end
+
+	---Stands in for the server answering a score data request.
+	function env.FireScoreUpdate()
+		context.Mock.FireEvent("UPDATE_BATTLEFIELD_SCORE")
 	end
 
 	---Controls the live dampening reading, which comes from C_Commentator.GetDampeningPercent.

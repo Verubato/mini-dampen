@@ -31,13 +31,21 @@ draws a single string, centred as a unit.
   `arena1`, `arena2`, `arena3`) and the dampening aura (spell 110310). An opponent counts as
   hidden, not dead, 1.5 seconds after an `ARENA_OPPONENT_UPDATE` "unseen" for it, unless a
   "seen" arrives first; the alive count itself only ever moves on an actual death.
-- Solo shuffle round record: the round number starts at 1 the first time a round moves from
-  `StartUp` to `Engaged` after entering, increments on every later `StartUp` -> `Engaged`
-  edge, and caps at 6. A round's result comes from `C_PvP.GetActiveMatchWinner` where that
-  answers a real faction and agrees with the corpse latch; otherwise it falls back to
-  whichever side had every member die at some point in the round, which reads as unknown
-  when a departing opponent leaves that undecidable. The record survives a `/reload` as long
-  as the same match is still running.
+- Solo shuffle round record: the win-loss record comes off the server's own scoreboard where
+  it can be read. Entering `PostRound` asks for the score data, and the answering
+  `UPDATE_BATTLEFIELD_SCORE` supplies every player's wins; the whole board's wins divide by
+  three for the rounds played, and the player's own row gives the wins. A board is only read
+  once this arena has asked for one, so the client's cache of a previous match cannot be
+  mistaken for this one. Any row that reads secret, any row missing its stats, a name matching
+  two rows, or a count that would move the record backwards abandons the whole reading and
+  leaves the previous one standing.
+- Where no scoreboard reading has landed, the record falls back to counting rounds locally: the
+  round number starts at 1 the first time a round moves from `StartUp` to `Engaged` after
+  entering, increments on every later `StartUp` -> `Engaged` edge, and caps at 6. A round's
+  result comes from `C_PvP.GetActiveMatchWinner` where that answers a real faction and agrees
+  with the corpse latch; otherwise it falls back to whichever side had every member die at some
+  point in the round, which reads as unknown when a departing opponent leaves that undecidable.
+  The record survives a `/reload` as long as the same match is still running.
 - Dims Blizzard's own top-center arena widgets while in scope, restoring exactly the alpha
   it found beforehand rather than always setting 1.
 - `Enabled = false` keeps the whole feature dormant, including while already in an arena.
@@ -117,7 +125,8 @@ confirmation prompt.
 | Nothing shows in an arena | Check "Enabled". Click Test briefly to confirm the rows exist and draw with sample data. |
 | Dampening row is missing entirely | The dampening aura was unreadable this session (absent, secret, or not a number); the row hides rather than showing a blank or a zero. |
 | Enemy alive count seems to skip an opponent | Either it has been continuously out of sight for 1.5 seconds, drawn hidden without changing the count, or it disconnected or left and Blizzard cleared its visibility override, drawn the same way but this time subtracted from the count and marked with `?` since it can no longer be confirmed alive. A departed ally is handled the same way. |
-| Round record shows a trailing `?` | At least one settled round could not be determined (usually an opponent left before dying), so the total is unknown rather than wrong. |
+| Round record shows a trailing `?` | No scoreboard reading has landed, and at least one locally settled round could not be determined (usually an opponent left before dying), so the total is unknown rather than wrong. |
+| Round record is missing in a solo shuffle | The client has not called the match a shuffle yet. `/minidampen debug` shows `isSoloShuffle` and `rawIsSoloShuffle`; the flag is re-read on every gated event, so it recovers on its own once the client answers. |
 | Cannot move the display | Test mode is off. Click Test in the settings panel first. |
 | Blizzard's own arena widgets are gone | Expected while "Hide Blizzard" is on and you are in scope; they return to whatever alpha MiniDampen found them at on leaving, so they can come back dimmed if another addon had already dimmed them. |
 | Need to see the raw values behind any of the above | `/minidampen debug` prints them all to chat, including mid-fight where `/dump` itself is refused. See Slash commands above. |

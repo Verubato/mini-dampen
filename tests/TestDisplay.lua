@@ -193,6 +193,50 @@ fw.describe("MiniDampen - round record value text", function()
 	end)
 end)
 
+fw.describe("MiniDampen - round record from the scoreboard", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+		env.SoloShuffle = true
+		env.Enter()
+	end)
+
+	fw.it("draws the scoreboard's record rather than the rounds settled so far, and marks no ?", function()
+		env.Scores = {
+			{ Name = Arena.PLAYER_NAME, Wins = 1 },
+			{ Name = "Allyone", Wins = 3 },
+			{ Name = "Allytwo", Wins = 2 },
+			{ Name = "Foeone", Wins = 1 },
+			{ Name = "Foetwo", Wins = 1 },
+			{ Name = "Foethree", Wins = 1 },
+		}
+		env.SetState(2) -- StartUp
+		env.SetState(3) -- Engaged
+		env.SetWinner(0) -- one settled win, which is the record the fallback would draw
+		env.SetState(4) -- PostRound
+		env.FireScoreUpdate()
+		env.Addon.Display:Refresh()
+
+		local text = env.Addon.Display.CountsBlock.Value:GetText()
+
+		fw.eq(StripColor(text), "1W - 2L", "one win of the scoreboard's three rounds")
+		fw.falsy(text:find("?", 1, true), "a scoreboard reading is complete, so nothing is marked unknown")
+	end)
+
+	fw.it("keeps drawing the settled rounds, ? and all, when no scoreboard reading landed", function()
+		env.SetWinner(nil)
+		env.SetState(2)
+		env.SetState(3)
+		env.Cleared("arena1") -- never latches dead, so the corpse latch can't decide either
+		env.SetState(4)
+		env.Addon.Display:Refresh()
+
+		fw.is_nil(env.Addon.MatchState.State.scoreRounds, "an empty scoreboard read nothing")
+		fw.eq(StripColor(env.Addon.Display.CountsBlock.Value:GetText()), "0W - 0L?", "the settled tally is untouched")
+	end)
+end)
+
 fw.describe("MiniDampen - dampening visibility", function()
 	local env
 

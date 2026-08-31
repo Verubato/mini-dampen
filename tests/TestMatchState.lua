@@ -4,7 +4,7 @@
 local fw = require("TestFramework")
 local Arena = require("Arena")
 
-local GATED_EVENT_COUNT = 6
+local GATED_EVENT_COUNT = 7
 
 local function gatedFrame(env)
 	for _, frame in ipairs(env.Context.Mock.Frames) do
@@ -38,7 +38,7 @@ fw.describe("MiniDampen - scope gate", function()
 		fw.eq(#env.Tickers, 0, "no ticker created")
 	end)
 
-	fw.it("registers exactly the six gated events and one ticker on entering", function()
+	fw.it("registers exactly the seven gated events and one ticker on entering", function()
 		env.Enter()
 
 		local frame = gatedFrame(env)
@@ -506,6 +506,283 @@ fw.describe("MiniDampen - round settling", function()
 			env.SetWinner(0)
 			env.SetState(4) -- PostRound, settling with db.ActiveMatch already nil
 		end, "round activity after PVP_MATCH_COMPLETE, before the scope closes")
+	end)
+end)
+
+fw.describe("MiniDampen - the scoreboard round record", function()
+	local env
+
+	---Six rows totalling nine wins, which is three rounds at a team size of three. The player's
+	---own row carries a realm, the way the scoreboard reports it.
+	local function board()
+		return {
+			{ Name = Arena.PLAYER_NAME .. "-TestRealm", Wins = 2 },
+			{ Name = "Allyone", Wins = 2 },
+			{ Name = "Allytwo", Wins = 2 },
+			{ Name = "Foeone", Wins = 1 },
+			{ Name = "Foetwo", Wins = 1 },
+			{ Name = "Foethree", Wins = 1 },
+		}
+	end
+
+	fw.before_each(function()
+		env = Arena.Build()
+		env.SoloShuffle = true
+		env.Enter()
+		env.Scores = board()
+	end)
+
+	---The server answers the PostRound request with its own event, which is the only thing that
+	---commits a reading.
+	local function reachPostRound()
+		env.SetState(2) -- StartUp
+		env.SetState(3) -- Engaged
+		env.SetState(4) -- PostRound
+		env.FireScoreUpdate()
+	end
+
+	fw.it("reads the player's own wins and the rounds played straight off the scoreboard", function()
+		reachPostRound()
+
+		local state = env.Addon.MatchState.State
+
+		fw.eq(state.scoreWins, 2, "the player's own row, matched past its realm")
+		fw.eq(state.scoreRounds, 3, "nine wins across a team size of three")
+	end)
+
+	fw.it("asks the server for the score data on entering PostRound", function()
+		fw.falsy(env.ScoreDataRequested, "nothing asked for while the round is still running")
+
+		reachPostRound()
+
+		fw.truthy(env.ScoreDataRequested, "the end of the round asks")
+	end)
+
+	fw.it("abandons the whole reading when one row is secret", function()
+		env.Scores[4].Secret = true
+		reachPostRound()
+
+		local state = env.Addon.MatchState.State
+
+		fw.is_nil(state.scoreWins, "no wins committed")
+		fw.is_nil(state.scoreRounds, "no round count committed")
+
+		-- The same board with that row readable, so the guard is what refused the reading.
+		env.Scores[4].Secret = nil
+		env.FireScoreUpdate()
+
+		fw.eq(state.scoreRounds, 3, "reads once every row is readable")
+	end)
+
+	fw.it("abandons the whole reading when one row's win count is secret", function()
+		env.Scores[4].Wins = Arena.SECRET
+		reachPostRound()
+
+		local state = env.Addon.MatchState.State
+
+		fw.is_nil(state.scoreWins, "no wins committed")
+		fw.is_nil(state.scoreRounds, "a total missing one row divides into a wrong round count")
+
+		-- The same board with that row readable, so the guard is what refused the reading.
+		env.Scores[4].Wins = 1
+		env.FireScoreUpdate()
+
+		fw.eq(state.scoreRounds, 3, "reads once every win count is readable")
+	end)
+
+	fw.it("abandons the whole reading when one row carries no stats at all", function()
+		env.Scores[4].NoStats = true
+		reachPostRound()
+
+		local state = env.Addon.MatchState.State
+
+		fw.is_nil(state.scoreWins, "no wins committed")
+		fw.is_nil(state.scoreRounds, "no round count committed")
+
+		-- The same board with that row carrying stats, so the guard is what refused the reading.
+		env.Scores[4].NoStats = nil
+		env.FireScoreUpdate()
+
+		fw.eq(state.scoreRounds, 3, "reads once every row carries its stats")
+	end)
+
+	fw.it("abandons the reading when the player's own row is not on the scoreboard", function()
+		env.Scores[1].Name = "Someoneelse"
+		reachPostRound()
+
+		local state = env.Addon.MatchState.State
+
+		fw.is_nil(state.scoreWins, "nothing to report as the player's own record")
+		fw.is_nil(state.scoreRounds, "so the round count is abandoned with it")
+
+		-- The same board with the player back on it, so the missing row is what refused it.
+		env.Scores[1].Name = Arena.PLAYER_NAME
+		env.FireScoreUpdate()
+
+		fw.eq(state.scoreWins, 2, "reads once the player is on the board")
+	end)
+
+	fw.it("reads nothing while the round is still being played", function()
+		env.SetState(2) -- StartUp
+		env.SetState(3) -- Engaged
+		env.FireScoreUpdate()
+
+		local state = env.Addon.MatchState.State
+
+		fw.is_nil(state.scoreWins, "the scoreboard reads secret mid-round")
+		fw.is_nil(state.scoreRounds, "so nothing is taken from it")
+
+		env.SetState(4) -- PostRound
+		env.FireScoreUpdate()
+
+		fw.eq(state.scoreRounds, 3, "the same board reads once the round is over")
+	end)
+
+	fw.it("reads nothing in a plain arena, which has no rounds to record", function()
+		env.SoloShuffle = false
+		reachPostRound()
+
+		local state = env.Addon.MatchState.State
+
+		fw.is_nil(state.scoreWins, "no wins committed")
+		fw.is_nil(state.scoreRounds, "no round count committed")
+
+		env.SoloShuffle = true
+		env.FireScoreUpdate()
+
+		fw.eq(state.scoreRounds, 3, "the same board reads in a shuffle")
+	end)
+
+	fw.it("refuses a reading that would take the round count backwards", function()
+		reachPostRound()
+
+		local state = env.Addon.MatchState.State
+
+		fw.eq(state.scoreRounds, 3, "three rounds read")
+
+		env.Scores = {
+			{ Name = Arena.PLAYER_NAME, Wins = 1 },
+			{ Name = "Allyone", Wins = 1 },
+			{ Name = "Allytwo", Wins = 1 },
+			{ Name = "Foeone", Wins = 1 },
+			{ Name = "Foetwo", Wins = 1 },
+			{ Name = "Foethree", Wins = 1 },
+		}
+		-- A whole round on, so the reading is asked for again and only the count refuses it.
+		reachPostRound()
+
+		fw.eq(state.scoreRounds, 3, "the stale two-round answer was refused")
+		fw.eq(state.scoreWins, 2, "and the wins that came with the higher reading survive")
+	end)
+
+	fw.it("adopts the round index from the scoreboard when no round edge was ever seen", function()
+		local fresh = Arena.Build()
+		fresh.SoloShuffle = true
+		-- Entering already Engaged, so nothing ever counted a StartUp edge.
+		fresh.MatchState = 3
+		fresh.Enter()
+
+		fw.is_nil(fresh.Addon.MatchState.State.roundIndex, "no edge to count rounds from")
+
+		fresh.Scores = board()
+		fresh.SetState(4) -- PostRound
+		fresh.FireScoreUpdate()
+
+		fw.eq(fresh.Addon.MatchState.State.roundIndex, 3, "the scoreboard's own round count")
+		fw.eq(_G.MiniDampenDB.ActiveMatch.RoundIndex, 3, "written through the way a settled round is")
+	end)
+
+	fw.it("refuses a board this scope never asked for", function()
+		-- The client hands back whatever it was last sent, which for the first round of a match
+		-- is the previous match's finished board.
+		env.FireScoreUpdate()
+
+		local state = env.Addon.MatchState.State
+
+		fw.is_nil(state.scoreWins, "a board that predates the request commits nothing")
+		fw.is_nil(state.scoreRounds, "so a finished match cannot seed the next one")
+		fw.is_nil(state.roundIndex, "and the round index is left for a real reading")
+
+		reachPostRound()
+
+		fw.eq(state.scoreRounds, 3, "the same board reads once it was asked for")
+	end)
+
+	fw.it("divides by the size a shuffle always is, not the roster counted so far", function()
+		env.SetState(2)
+		env.SetState(3)
+		env.SetState(4)
+		-- A roster still filling in reads low, and dividing by it would multiply the round count.
+		env.Addon.MatchState.State.teamSize = 1
+		env.FireScoreUpdate()
+
+		local state = env.Addon.MatchState.State
+
+		fw.eq(state.scoreRounds, 3, "nine wins is three rounds however many players are known")
+		fw.eq(state.roundIndex, 3, "so the round index cannot run past the match")
+	end)
+
+	fw.it("refuses a board that totals no rounds at all", function()
+		for _, row in ipairs(env.Scores) do
+			row.Wins = 0
+		end
+
+		reachPostRound()
+
+		local state = env.Addon.MatchState.State
+
+		fw.is_nil(state.scoreRounds, "an empty board is a stale one, not a finished round")
+		fw.eq(state.roundIndex, 1, "the counted round edge stands rather than being zeroed")
+	end)
+
+	fw.it("refuses a board giving the player more wins than there were rounds", function()
+		env.Scores = {
+			{ Name = Arena.PLAYER_NAME, Wins = 4 },
+			{ Name = "Allyone", Wins = 0 },
+			{ Name = "Allytwo", Wins = 0 },
+			{ Name = "Foeone", Wins = 1 },
+			{ Name = "Foetwo", Wins = 1 },
+			{ Name = "Foethree", Wins = 0 },
+		}
+
+		reachPostRound()
+
+		local state = env.Addon.MatchState.State
+
+		fw.is_nil(state.scoreWins, "six wins over three slots is two rounds, so four wins is wrong")
+		fw.is_nil(state.scoreRounds, "and the round count goes with it")
+	end)
+
+	fw.it("never reports more rounds than a shuffle has", function()
+		env.Scores = {
+			{ Name = Arena.PLAYER_NAME, Wins = 6 },
+			{ Name = "Allyone", Wins = 6 },
+			{ Name = "Allytwo", Wins = 6 },
+			{ Name = "Foeone", Wins = 3 },
+			{ Name = "Foetwo", Wins = 3 },
+			{ Name = "Foethree", Wins = 3 },
+		}
+
+		reachPostRound()
+
+		fw.eq(env.Addon.MatchState.State.scoreRounds, 6, "twenty-seven wins still caps at six rounds")
+	end)
+
+	fw.it("abandons the reading when two rows answer to the player's name", function()
+		env.Scores[4].Name = Arena.PLAYER_NAME .. "-OtherRealm"
+
+		reachPostRound()
+
+		local state = env.Addon.MatchState.State
+
+		fw.is_nil(state.scoreWins, "no way to tell which row is the player's own")
+		fw.is_nil(state.scoreRounds, "so the whole reading is abandoned")
+
+		-- The same board with the opponent renamed, so the clash is what refused it.
+		env.Scores[4].Name = "Foeone"
+		env.FireScoreUpdate()
+
+		fw.eq(state.scoreWins, 2, "reads once only one row carries the name")
 	end)
 end)
 
@@ -1067,6 +1344,28 @@ fw.describe("MiniDampen - Debug()", function()
 		fw.truthy(line:find("rawIsSoloShuffle=true", 1, true) ~= nil, "and what the client itself answers")
 		fw.truthy(line:find("roundIndex=1", 1, true) ~= nil, "the other gate")
 		fw.truthy(line:find("results=win,", 1, true) ~= nil, "and the record so far")
+	end)
+
+	fw.it("reports the scoreboard reading on that same line, so a preferred record is diagnosable", function()
+		env.SoloShuffle = true
+		env.Enter()
+		env.Scores = {
+			{ Name = Arena.PLAYER_NAME, Wins = 2 },
+			{ Name = "Allyone", Wins = 2 },
+			{ Name = "Allytwo", Wins = 2 },
+			{ Name = "Foeone", Wins = 1 },
+			{ Name = "Foetwo", Wins = 1 },
+			{ Name = "Foethree", Wins = 1 },
+		}
+		env.SetState(2)
+		env.SetState(3)
+		env.SetState(4)
+		env.FireScoreUpdate()
+
+		local line = FindLine(env.Addon.MatchState:Debug(), "isSoloShuffle=")
+
+		fw.truthy(line:find("scoreWins=2", 1, true) ~= nil, "the player's own wins off the scoreboard")
+		fw.truthy(line:find("scoreRounds=3", 1, true) ~= nil, "and the rounds they came out of")
 	end)
 
 	fw.it("routes every Debug() field through SafeString, so a secret value is never interpolated raw", function()

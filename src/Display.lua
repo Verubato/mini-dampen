@@ -41,6 +41,10 @@ local SAMPLE_SHUFFLE_STATE = {
 	isSoloShuffle = true,
 	roundIndex = 4,
 	roundResults = { "win", "loss", "win" },
+	-- The same record again off the scoreboard, so the preview exercises the path a live match
+	-- draws from.
+	scoreWins = 2,
+	scoreRounds = 3,
 }
 -- One full swap between the two samples and back.
 local SAMPLE_PERIOD = 20
@@ -155,15 +159,21 @@ end
 local function RoundsValueText(effState)
 	local wins, losses, hasUnknown = 0, 0, false
 
-	for i = 1, MAX_ROUNDS do
-		local result = effState.roundResults[i]
+	-- The scoreboard is the server's own record, so a reading from it is never marked.
+	if type(effState.scoreWins) == "number" and type(effState.scoreRounds) == "number" then
+		wins = effState.scoreWins
+		losses = effState.scoreRounds - effState.scoreWins
+	else
+		for i = 1, MAX_ROUNDS do
+			local result = effState.roundResults[i]
 
-		if result == "win" then
-			wins = wins + 1
-		elseif result == "loss" then
-			losses = losses + 1
-		elseif result == "unknown" then
-			hasUnknown = true
+			if result == "win" then
+				wins = wins + 1
+			elseif result == "loss" then
+				losses = losses + 1
+			elseif result == "unknown" then
+				hasUnknown = true
+			end
 		end
 	end
 

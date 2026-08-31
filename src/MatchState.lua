@@ -24,6 +24,9 @@ local bootstrap
 local gated
 local ticker
 local lastMatchState
+-- The client keeps the last board it was sent, so a reading is only trusted once this scope
+-- has asked for a fresh one and the server has answered.
+local scoreRequested = false
 -- Ratchets up only, never down, so a transient undercount after a reload can't shrink a
 -- roster already proven real.
 local teamSizeSeen = 0
@@ -36,6 +39,10 @@ local state = {
 	dampening = nil,
 	roundIndex = nil,
 	roundResults = {},
+	-- Both nil until a scoreboard reading lands, which is what makes the display fall back to
+	-- the settled results.
+	scoreWins = nil,
+	scoreRounds = nil,
 }
 ---@class MatchState
 local M = {}
@@ -118,6 +125,117 @@ local function ReadSoloShuffle()
 	-- A secret reading is truthy, so testing it for true is what keeps a normal arena from
 	-- drawing a round record it has no rounds for.
 	state.isSoloShuffle = not mini:IsSecret(value) and value == true
+end
+
+---The server answers a request with UPDATE_BATTLEFIELD_SCORE rather than filling the tables in
+---place, so nothing is readable on this call.
+local function RequestScoreData()
+	if type(RequestBattlefieldScoreData) ~= "function" then
+		return
+	end
+
+	scoreRequested = true
+	RequestBattlefieldScoreData()
+end
+
+---The scoreboard reports a "Name-Realm" the player's own token answers without.
+local function IsPlayerRow(name, playerName)
+	if mini:IsSecret(name) or type(name) ~= "string" then
+		return false
+	end
+
+	return name == playerName or name:match("^[^-]+") == playerName
+end
+
+---Every row has to read, since a total missing one player's wins divides into a round count
+---that is simply wrong.
+local function ReadScoreboard()
+	if not state.isSoloShuffle or not scoreRequested then
+		return
+	end
+
+	if type(GetNumBattlefieldScores) ~= "function" or type(C_PvP.GetScoreInfo) ~= "function" then
+		return
+	end
+
+	local playerName = UnitName("player")
+
+	if mini:IsSecret(playerName) or type(playerName) ~= "string" then
+		return
+	end
+
+	local count = GetNumBattlefieldScores()
+
+	if mini:IsSecret(count) or type(count) ~= "number" then
+		return
+	end
+
+	local total = 0
+	local ownWins
+	local ownRows = 0
+
+	for i = 1, count do
+		local info = C_PvP.GetScoreInfo(i)
+
+		if mini:IsSecret(info) or type(info) ~= "table" then
+			return
+		end
+
+		local stats = info.stats
+
+		if mini:IsSecret(stats) or type(stats) ~= "table" then
+			return
+		end
+
+		-- The stat's own id changes between matches, so wins are reached by position.
+		local stat = stats[1]
+
+		if mini:IsSecret(stat) or type(stat) ~= "table" then
+			return
+		end
+
+		local wins = stat.pvpStatValue
+
+		if mini:IsSecret(wins) or type(wins) ~= "number" then
+			return
+		end
+
+		total = total + wins
+
+		if IsPlayerRow(info.name, playerName) then
+			ownWins = wins
+			ownRows = ownRows + 1
+		end
+	end
+
+	-- Two players can share a name across realms, and picking the wrong one's wins would draw a
+	-- record that looks real.
+	if not ownWins or ownRows ~= 1 then
+		return
+	end
+
+	-- Every round produces exactly one winner per team slot, and a shuffle is always three a
+	-- side, so the whole board's wins divide into the rounds played.
+	local rounds = math.min(math.floor(total / MAX_TEAM_SIZE), MAX_ROUNDS)
+
+	if rounds < 1 or ownWins < 0 or ownWins > rounds then
+		return
+	end
+
+	-- Between rounds the server can answer with the previous round's board.
+	if state.scoreRounds and rounds < state.scoreRounds then
+		return
+	end
+
+	scoreRequested = false
+	state.scoreWins = ownWins
+	state.scoreRounds = rounds
+	-- The counter this replaces stays nil for the whole match when the scope opens mid-round.
+	state.roundIndex = rounds
+
+	if db.ActiveMatch then
+		db.ActiveMatch.RoundIndex = rounds
+	end
 end
 
 local function Poll()
@@ -394,6 +512,7 @@ local function OnMatchStateChanged()
 		ClearEverDeadAndHidden()
 	elseif newState == Enum.PvPMatchState.PostRound and lastMatchState ~= Enum.PvPMatchState.PostRound then
 		SettleRound()
+		RequestScoreData()
 	end
 
 	lastMatchState = newState
@@ -443,10 +562,16 @@ local function OnGatedEvent(_, event, ...)
 		OnPrepOpponentSpecializations()
 	elseif event == "GROUP_ROSTER_UPDATE" then
 		OnGroupRosterUpdate()
+	elseif event == "UPDATE_BATTLEFIELD_SCORE" then
+		ReadScoreboard()
+		Notify()
 	elseif event == "PVP_MATCH_COMPLETE" then
 		db.ActiveMatch = nil
 		state.roundIndex = nil
 		state.roundResults = {}
+		state.scoreWins = nil
+		state.scoreRounds = nil
+		scoreRequested = false
 		Notify()
 	elseif event == "UNIT_AURA" then
 		-- The only gated handler that can decline to notify, so it is the only one that has to
@@ -465,6 +590,9 @@ local function OpenScope()
 	RefreshTeamSize()
 	ReadSoloShuffle()
 	state.dampening = nil
+	state.scoreWins = nil
+	state.scoreRounds = nil
+	scoreRequested = false
 	lastMatchState = C_PvP.GetActiveMatchState()
 
 	AdoptOrCreateRecord()
@@ -474,6 +602,7 @@ local function OpenScope()
 	gated:RegisterEvent("ARENA_PREP_OPPONENT_SPECIALIZATIONS")
 	gated:RegisterEvent("GROUP_ROSTER_UPDATE")
 	gated:RegisterEvent("PVP_MATCH_COMPLETE")
+	gated:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
 	gated:RegisterUnitEvent("UNIT_AURA", "player")
 
 	ticker = C_Timer.NewTicker(POLL_INTERVAL, Poll)
@@ -490,6 +619,9 @@ local function CloseScope()
 	state.dampening = nil
 	state.roundIndex = nil
 	state.roundResults = {}
+	state.scoreWins = nil
+	state.scoreRounds = nil
+	scoreRequested = false
 	teamSizeSeen = 0
 
 	gated:UnregisterAllEvents()
@@ -790,12 +922,14 @@ function M:Debug()
 	end
 
 	lines[#lines + 1] = string.format(
-		"isSoloShuffle=%s rawIsSoloShuffle=%s bracket=%s roundIndex=%s results=%s",
+		"isSoloShuffle=%s rawIsSoloShuffle=%s bracket=%s roundIndex=%s results=%s scoreWins=%s scoreRounds=%s",
 		SafeString(state.isSoloShuffle),
 		SafeString(rawShuffle),
 		SafeString(bracket),
 		SafeString(state.roundIndex),
-		table.concat(results, ",")
+		table.concat(results, ","),
+		SafeString(state.scoreWins),
+		SafeString(state.scoreRounds)
 	)
 
 	-- Mirrors ReadDampening's own guard order, so a secret reading is never indexed further
