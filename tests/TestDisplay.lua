@@ -493,13 +493,12 @@ fw.describe("MiniDampen - container layout", function()
 		local late = Arena.Build()
 		late.SoloShuffle = false
 		late.Enter()
-		late.SetState(2) -- StartUp
-		late.SetState(3) -- Engaged, so roundIndex is 1 and only the flag is missing
+		late.SetState(2) -- StartUp, with the client still not calling it a shuffle
 
 		fw.falsy(late.Addon.Display.RoundBlock.Frame:IsShown(), "no round line while the client still says it is not a shuffle")
 
 		late.SoloShuffle = true
-		late.Tick(0.5)
+		late.SetState(3) -- Engaged, so roundIndex becomes 1 and the flag is asked again
 
 		fw.truthy(late.Addon.Display.RoundBlock.Frame:IsShown(), "the round line appears once the client answers")
 		fw.eq(StripColor(late.Addon.Display.RoundBlock.Value:GetText()), "Round 1/6", "reading the round it already counted")

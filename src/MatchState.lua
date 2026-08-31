@@ -109,28 +109,21 @@ local function ReadDampening()
 	end
 end
 
----The scope opens as early as the prep room, where the client can still answer false while the
----match data is arriving. The flag ratchets on only, so a momentary false cannot drop the
----round record.
+---Cached only because Display reads the flag out of state alongside the rest of the row. The
+---scope can open before the client has the match data to answer with, so every gated event
+---asks again rather than trusting the one reading taken at OpenScope.
 local function ReadSoloShuffle()
-	if state.isSoloShuffle or type(C_PvP.IsSoloShuffle) ~= "function" then
-		return
-	end
-
-	local value = C_PvP.IsSoloShuffle()
+	local value = type(C_PvP.IsSoloShuffle) == "function" and C_PvP.IsSoloShuffle()
 
 	-- A secret reading is truthy, so testing it for true is what keeps a normal arena from
 	-- drawing a round record it has no rounds for.
-	if not mini:IsSecret(value) and value == true then
-		state.isSoloShuffle = true
-	end
+	state.isSoloShuffle = not mini:IsSecret(value) and value == true
 end
 
 local function Poll()
 	ReadDeaths(state.ally)
 	ReadDeaths(state.enemy)
 	ExpireHidden(state.enemy)
-	ReadSoloShuffle()
 	ReadDampening()
 	Notify()
 end
@@ -390,7 +383,6 @@ local function OnMatchStateChanged()
 	local newState = C_PvP.GetActiveMatchState()
 
 	RefreshTeamSize()
-	ReadSoloShuffle()
 
 	if newState == Enum.PvPMatchState.Engaged and lastMatchState == Enum.PvPMatchState.StartUp then
 		state.roundIndex = math.min((state.roundIndex or 0) + 1, MAX_ROUNDS)
@@ -428,17 +420,21 @@ end
 
 ---UNIT_AURA fires many times a second in arena, so notifying only on an actual change spares
 ---Display a full Refresh on every no-op firing.
-local function OnUnitAura()
+local function OnUnitAura(shuffleChanged)
 	local previous = state.dampening
 
 	ReadDampening()
 
-	if state.dampening ~= previous then
+	if shuffleChanged or state.dampening ~= previous then
 		Notify()
 	end
 end
 
 local function OnGatedEvent(_, event, ...)
+	local wasSoloShuffle = state.isSoloShuffle
+
+	ReadSoloShuffle()
+
 	if event == "PVP_MATCH_STATE_CHANGED" then
 		OnMatchStateChanged()
 	elseif event == "ARENA_OPPONENT_UPDATE" then
@@ -453,7 +449,9 @@ local function OnGatedEvent(_, event, ...)
 		state.roundResults = {}
 		Notify()
 	elseif event == "UNIT_AURA" then
-		OnUnitAura()
+		-- The only gated handler that can decline to notify, so it is the only one that has to
+		-- be told the flag moved.
+		OnUnitAura(state.isSoloShuffle ~= wasSoloShuffle)
 	end
 end
 

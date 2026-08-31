@@ -424,36 +424,50 @@ fw.describe("MiniDampen - round settling", function()
 		fw.falsy(fresh.Addon.MatchState.State.isSoloShuffle, "nothing to go on when the scope opened")
 
 		fresh.SoloShuffle = true
-		fresh.Tick(0.5)
+		fresh.Context.Mock.FireEvent("GROUP_ROSTER_UPDATE")
 
-		fw.truthy(fresh.Addon.MatchState.State.isSoloShuffle, "the poll picked it up")
+		fw.truthy(fresh.Addon.MatchState.State.isSoloShuffle, "any gated event asks the client again")
 	end)
 
-	fw.it("calls it a shuffle on a match state change without waiting for the next poll", function()
+	fw.it("calls it a shuffle on a match state change too, not only a roster one", function()
 		local fresh = Arena.Build()
 		fresh.SoloShuffle = false
 		fresh.Enter()
 		fresh.SoloShuffle = true
-		fresh.SetState(2) -- StartUp, with no Tick in between
+		fresh.SetState(2) -- StartUp
 
-		fw.truthy(fresh.Addon.MatchState.State.isSoloShuffle, "read on the transition too")
+		fw.truthy(fresh.Addon.MatchState.State.isSoloShuffle, "read on the transition as well")
 	end)
 
-	fw.it("holds the shuffle flag once seen, so a momentary false cannot drop the round record", function()
+	fw.it("follows the client back down rather than latching a reading it cannot re-verify", function()
 		local fresh = Arena.Build()
 		fresh.SoloShuffle = true
 		fresh.Enter()
-		fresh.SoloShuffle = false
-		fresh.Tick(0.5)
 
-		fw.truthy(fresh.Addon.MatchState.State.isSoloShuffle, "held rather than flickering back to the counts row")
+		fw.truthy(fresh.Addon.MatchState.State.isSoloShuffle, "read at scope open")
+
+		fresh.SoloShuffle = false
+		fresh.SetState(2)
+
+		fw.falsy(fresh.Addon.MatchState.State.isSoloShuffle, "no stale true outlives the client's own answer")
+	end)
+
+	fw.it("redraws on a UNIT_AURA that moves the flag but leaves dampening alone", function()
+		-- UNIT_AURA is the one gated handler that can decline to notify, so it is the one that
+		-- could otherwise sit on a changed flag until the next event.
+		local fresh = Arena.Build()
+		fresh.SoloShuffle = false
+		fresh.Enter()
+		fresh.SoloShuffle = true
+		fresh.Context.Mock.FireEvent("UNIT_AURA", "player")
+
+		fw.truthy(fresh.Addon.MatchState.State.isSoloShuffle, "the flag moved on a bare aura event")
 	end)
 
 	fw.it("does not call a plain arena a shuffle on a secret reading", function()
 		local fresh = Arena.Build()
 		fresh.SoloShuffle = Arena.SECRET
 		fresh.Enter()
-		fresh.Tick(0.5)
 
 		fw.falsy(fresh.Addon.MatchState.State.isSoloShuffle, "a secret value is truthy, so it must be tested for true")
 	end)
@@ -462,7 +476,6 @@ fw.describe("MiniDampen - round settling", function()
 		local fresh = Arena.Build()
 		fresh.SoloShuffle = true
 		fresh.Enter()
-		fresh.Tick(0.5)
 
 		fw.truthy(fresh.Addon.MatchState.State.isSoloShuffle, "set while in the shuffle")
 
