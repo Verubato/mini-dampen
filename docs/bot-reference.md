@@ -11,7 +11,7 @@ draws a single string, centred as a unit.
 
 | Item | Value |
 | --- | --- |
-| Version | 1.0.0 |
+| Version | 1.0.2 |
 | Author | Verz |
 | Interface version (TOC) | 120100 (retail only) |
 | Saved variables | MiniDampenDB |
