@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3
+
+Fixed the solo shuffle record showing the previous round's result, which reported some
+wins as losses and some losses as wins.
+
 ## 1.0.2
 
 Fixed rounds text not showing in solo shuffle.
