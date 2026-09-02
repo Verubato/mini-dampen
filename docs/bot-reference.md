@@ -37,8 +37,11 @@ draws a single string, centred as a unit.
   three for the rounds played, and the player's own row gives the wins. A board is only read
   once this arena has asked for one, so the client's cache of a previous match cannot be
   mistaken for this one. Any row that reads secret, any row missing its stats, a name matching
-  two rows, or a count that would move the record backwards abandons the whole reading and
-  leaves the previous one standing.
+  two rows, or, once a round has been counted, a count behind either the round that asked or
+  the last reading taken abandons the whole reading and leaves the previous one standing. A
+  refused reading leaves the request open, so the board the server sends once the round is
+  credited is still read. A reading never lowers the round number, since the round being played
+  files its result under it.
 - Where no scoreboard reading has landed, the record falls back to counting rounds locally: the
   round number starts at 1 the first time a round moves from `StartUp` to `Engaged` after
   entering, increments on every later `StartUp` -> `Engaged` edge, and caps at 6. A round's

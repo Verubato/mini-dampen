@@ -24,9 +24,9 @@ local bootstrap
 local gated
 local ticker
 local lastMatchState
--- The client keeps the last board it was sent, so a reading is only trusted once this scope
--- has asked for a fresh one and the server has answered.
-local scoreRequested = false
+-- Rounds the answering board has to account for, since the client hands back the last board
+-- it was sent whether it was asked for or not.
+local scoreRequestedRounds
 -- Ratchets up only, never down, so a transient undercount after a reload can't shrink a
 -- roster already proven real.
 local teamSizeSeen = 0
@@ -134,7 +134,7 @@ local function RequestScoreData()
 		return
 	end
 
-	scoreRequested = true
+	scoreRequestedRounds = state.roundIndex or 0
 	RequestBattlefieldScoreData()
 end
 
@@ -150,7 +150,7 @@ end
 ---Every row has to read, since a total missing one player's wins divides into a round count
 ---that is simply wrong.
 local function ReadScoreboard()
-	if not state.isSoloShuffle or not scoreRequested then
+	if not state.isSoloShuffle or not scoreRequestedRounds then
 		return
 	end
 
@@ -222,19 +222,20 @@ local function ReadScoreboard()
 		return
 	end
 
-	-- Between rounds the server can answer with the previous round's board.
-	if state.scoreRounds and rounds < state.scoreRounds then
+	-- The server can answer with the board from before the round that asked for it.
+	if rounds < math.max(scoreRequestedRounds, state.scoreRounds or 0) then
 		return
 	end
 
-	scoreRequested = false
+	scoreRequestedRounds = nil
 	state.scoreWins = ownWins
 	state.scoreRounds = rounds
 	-- The counter this replaces stays nil for the whole match when the scope opens mid-round.
-	state.roundIndex = rounds
+	-- It never moves back, since the round in progress files its result under this number.
+	state.roundIndex = math.max(rounds, state.roundIndex or 0)
 
 	if db.ActiveMatch then
-		db.ActiveMatch.RoundIndex = rounds
+		db.ActiveMatch.RoundIndex = state.roundIndex
 	end
 end
 
@@ -571,7 +572,7 @@ local function OnGatedEvent(_, event, ...)
 		state.roundResults = {}
 		state.scoreWins = nil
 		state.scoreRounds = nil
-		scoreRequested = false
+		scoreRequestedRounds = nil
 		Notify()
 	elseif event == "UNIT_AURA" then
 		-- The only gated handler that can decline to notify, so it is the only one that has to
@@ -592,7 +593,7 @@ local function OpenScope()
 	state.dampening = nil
 	state.scoreWins = nil
 	state.scoreRounds = nil
-	scoreRequested = false
+	scoreRequestedRounds = nil
 	lastMatchState = C_PvP.GetActiveMatchState()
 
 	AdoptOrCreateRecord()
@@ -621,7 +622,7 @@ local function CloseScope()
 	state.roundResults = {}
 	state.scoreWins = nil
 	state.scoreRounds = nil
-	scoreRequested = false
+	scoreRequestedRounds = nil
 	teamSizeSeen = 0
 
 	gated:UnregisterAllEvents()

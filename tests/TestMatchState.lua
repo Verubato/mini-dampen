@@ -675,6 +675,81 @@ fw.describe("MiniDampen - the scoreboard round record", function()
 		fw.eq(state.scoreWins, 2, "and the wins that came with the higher reading survive")
 	end)
 
+	fw.it("keeps the round number when a refused board is answered after the next round starts", function()
+		local state = env.Addon.MatchState.State
+
+		-- Round one, won.
+		env.Scores = {
+			{ Name = Arena.PLAYER_NAME, Wins = 1 },
+			{ Name = "Allyone", Wins = 1 },
+			{ Name = "Allytwo", Wins = 1 },
+			{ Name = "Foeone", Wins = 0 },
+			{ Name = "Foetwo", Wins = 0 },
+			{ Name = "Foethree", Wins = 0 },
+		}
+		reachPostRound()
+
+		fw.eq(state.scoreRounds, 1, "one round read")
+
+		-- Round two ends and the server answers with round one's board, which is refused.
+		reachPostRound()
+
+		fw.eq(state.roundIndex, 2, "the round that just ended")
+
+		-- Round three is under way before the board counting round two finally lands.
+		env.SetState(2) -- StartUp
+		env.SetState(3) -- Engaged
+		env.Scores = {
+			{ Name = Arena.PLAYER_NAME, Wins = 1 },
+			{ Name = "Allyone", Wins = 1 },
+			{ Name = "Allytwo", Wins = 1 },
+			{ Name = "Foeone", Wins = 1 },
+			{ Name = "Foetwo", Wins = 1 },
+			{ Name = "Foethree", Wins = 1 },
+		}
+		env.FireScoreUpdate()
+
+		fw.eq(state.scoreRounds, 2, "the late board is still worth reading")
+		fw.eq(state.roundIndex, 3, "but the round being played is not dragged back to it")
+	end)
+
+	fw.it("refuses the board from before the round that asked, and still reads the one that follows", function()
+		local state = env.Addon.MatchState.State
+
+		-- Round one, won.
+		env.Scores = {
+			{ Name = Arena.PLAYER_NAME, Wins = 1 },
+			{ Name = "Allyone", Wins = 1 },
+			{ Name = "Allytwo", Wins = 1 },
+			{ Name = "Foeone", Wins = 0 },
+			{ Name = "Foetwo", Wins = 0 },
+			{ Name = "Foethree", Wins = 0 },
+		}
+		reachPostRound()
+
+		fw.eq(state.scoreWins, 1, "the round one win")
+		fw.eq(state.scoreRounds, 1, "off a board totalling one round")
+
+		-- Round two ends, and the server answers the request with round one's board again.
+		reachPostRound()
+
+		fw.eq(state.roundIndex, 2, "the round that just ended, not the one the stale board counts")
+
+		-- The board the server really has, arriving once round two is credited.
+		env.Scores = {
+			{ Name = Arena.PLAYER_NAME, Wins = 1 },
+			{ Name = "Allyone", Wins = 1 },
+			{ Name = "Allytwo", Wins = 1 },
+			{ Name = "Foeone", Wins = 1 },
+			{ Name = "Foetwo", Wins = 1 },
+			{ Name = "Foethree", Wins = 1 },
+		}
+		env.FireScoreUpdate()
+
+		fw.eq(state.scoreRounds, 2, "the request stayed open for the board that counts round two")
+		fw.eq(state.scoreWins, 1, "so the round the player lost draws as a loss")
+	end)
+
 	fw.it("adopts the round index from the scoreboard when no round edge was ever seen", function()
 		local fresh = Arena.Build()
 		fresh.SoloShuffle = true
