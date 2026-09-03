@@ -83,20 +83,6 @@ local function LibStubMock(env)
 	return stub
 end
 
----Installs one of the client's other widget set getters, reading its answer at call time so a
----test can change what it names after it exists.
-local function InstallWidgetSetGetter(env, name)
-	_G.C_UIWidgetManager[name] = function()
-		local answer = env.WidgetSetGetters[name]
-
-		if answer == "error" then
-			error("no widget set for " .. name)
-		end
-
-		return unpack(answer, 1, answer.n)
-	end
-end
-
 ---(Re)installs every override this addon's WoW API surface needs onto the mocked globals.
 ---Called once after the initial load and again after every simulated Reload, because
 ---WowMock.Install() replaces _G.C_PvP, _G.C_UnitAuras, _G.Enum and friends with fresh tables.
@@ -113,8 +99,8 @@ local function InstallOverrides(env)
 		Complete = 5,
 	}
 
-	-- Real values, so the probe's reverse lookup from a widget's type to its getter name
-	-- resolves the way it does in game rather than against an auto-vivified empty group.
+	-- Real values, so a comparison against Enum.UIWidgetVisualizationType.IconAndText
+	-- resolves the same way here as it does in game.
 	_G.Enum.UIWidgetVisualizationType = {
 		IconAndText = 0,
 		CaptureBar = 1,
@@ -185,64 +171,24 @@ local function InstallOverrides(env)
 		return rawequal(value, M.SECRET)
 	end
 
-	-- Slot numbers are the index into env.Auras[filter], so the probe's two-call enumeration
-	-- lands back on the same list the test authored.
-	_G.C_UnitAuras.GetAuraSlots = function(_, filter)
-		if env.AuraSlotsRefuses then
-			-- Matches the real client's refusal wording for a secret-tainted read in an active
-			-- arena, so a test can assert on it the way the reported bug's error text does.
-			error("GetAuraSlots(): Auras cannot be accessed when secret while tainted by 'MiniDampen'")
-		end
-
-		local auras = env.Auras[filter]
-
-		if not auras then
-			return nil
-		end
-
-		return nil, unpack(auras.Slots)
-	end
-
-	_G.C_UnitAuras.GetAuraDataBySlot = function(_, slot)
-		for _, auras in pairs(env.Auras) do
-			if auras.BySlot[slot] then
-				return auras.BySlot[slot]
-			end
-		end
-	end
-
 	_G.C_UIWidgetManager = {
 		GetTopCenterWidgetSetID = function()
 			return env.WidgetSetId
 		end,
-		GetAllWidgetsBySetID = function(setId)
+		GetAllWidgetsBySetID = function()
 			if env.SecretWidgetList then
 				return M.SECRET
 			end
 
-			return env.WidgetsBySet[setId] or env.Widgets
+			return env.Widgets
 		end,
 		GetIconAndTextWidgetVisualizationInfo = function(widgetId)
-			local info = env.WidgetInfoById[widgetId]
-
-			if info ~= nil then
-				return info
-			end
-
-			return env.WidgetInfo
+			return env.WidgetInfoById[widgetId]
 		end,
 	}
 
-	for name in pairs(env.WidgetSetGetters) do
-		InstallWidgetSetGetter(env, name)
-	end
-
 	_G.C_Commentator = {
 		GetDampeningPercent = function()
-			if env.CommentatorRefuses then
-				error("commentator only")
-			end
-
 			return env.CommentatorDampening
 		end,
 	}
@@ -341,27 +287,16 @@ function M.Build(options)
 		-- Counts every RequestBattlefieldScoreData call, so a test can prove the match asked
 		-- the server for its board exactly once.
 		ScoreRequests = 0,
-		NextAuraSlot = 0,
-		AuraSlotsRefuses = false,
 		Deaths = {},
 		SecretDeaths = {},
 		Feigns = {},
 		SecretFeigns = {},
-		Auras = {},
 		WidgetSetId = 0,
 		Widgets = {},
-		-- Set id -> its own widget list, for a test with more than one set in play. A set with
-		-- no entry falls back to env.Widgets.
-		WidgetsBySet = {},
-		-- Getter name -> the ids it names, or the string "error" for one that refuses.
-		WidgetSetGetters = {},
-		-- Widget id -> its own visualization info. A widget with no entry falls back to
-		-- env.WidgetInfo.
+		-- Widget id -> its own visualization info.
 		WidgetInfoById = {},
 		SecretWidgetList = false,
-		WidgetInfo = nil,
 		CommentatorDampening = nil,
-		CommentatorRefuses = false,
 		Exists = { player = true, party1 = true, party2 = true, arena1 = true, arena2 = true, arena3 = true },
 		Tickers = {},
 		-- Font name -> file, standing in for whatever another addon has registered with
@@ -423,39 +358,8 @@ function M.Build(options)
 		env.SecretFeigns[token] = nil
 	end
 
-	---Publishes one aura on the player under a filter, so /minidampen probe's slot enumeration
-	---has something to walk.
-	function env.AddAura(filter, aura)
-		local auras = env.Auras[filter]
-
-		if not auras then
-			auras = { Slots = {}, BySlot = {} }
-			env.Auras[filter] = auras
-		end
-
-		local slot = (env.NextAuraSlot or 0) + 1
-		env.NextAuraSlot = slot
-
-		auras.Slots[#auras.Slots + 1] = slot
-		auras.BySlot[slot] = aura
-	end
-
-	---Adds one of the client's other set getters, so discovery by name has more than the
-	---top-center one to find. Names every id passed, and none at all when passed none.
-	function env.AddWidgetSetGetter(name, ...)
-		env.WidgetSetGetters[name] = { n = select("#", ...), ... }
-		InstallWidgetSetGetter(env, name)
-	end
-
-	---Adds a set getter that refuses, the way one gated on something this client has no
-	---business asking about would.
-	function env.AddFailingWidgetSetGetter(name)
-		env.WidgetSetGetters[name] = "error"
-		InstallWidgetSetGetter(env, name)
-	end
-
-	---Stands in for a client with no widget system at all, which the dump has to survive rather
-	---than error on.
+	---Stands in for a client with no widget system at all, which the record read has to survive
+	---rather than error on.
 	function env.RemoveWidgetApi()
 		_G.C_UIWidgetManager = nil
 	end
@@ -592,8 +496,8 @@ function M.Build(options)
 		_G.C_Commentator = nil
 	end
 
-	---Stands in for a client with no scoreboard to read, which is what the debug dump has to
-	---survive rather than error on.
+	---Stands in for a client with no scoreboard to read, which the final round's board read has
+	---to survive rather than error on.
 	function env.RemoveScoreApi()
 		_G.GetNumBattlefieldScores = nil
 		_G.C_PvP.GetScoreInfo = nil

@@ -341,12 +341,6 @@ function M:SetForcedDampening(value)
 	self:Refresh()
 end
 
----Read by MatchState:Debug(), so a forced value that would otherwise silently outlive its
----preview still shows up in the one diagnostic meant to catch that.
-function M:GetForcedDampening()
-	return forcedDampening
-end
-
 ---Switches every row to sample data and unlocks the frame for dragging, until test mode is
 ---switched off again.
 ---@param value boolean

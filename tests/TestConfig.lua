@@ -45,88 +45,6 @@ fw.describe("MiniDampen - slash command aliases", function()
 	end)
 end)
 
-fw.describe("MiniDampen - /minidampen debug", function()
-	local env
-
-	fw.before_each(function()
-		env = Arena.Build()
-	end)
-
-	fw.it("prints one chat line per MatchState:Debug() entry, in or out of an arena", function()
-		local before = #env.Context.Mock.State.Prints
-
-		SlashCmdList.MINIDAMPEN("debug")
-
-		-- Debug() is side-effect free, so asking it again is what keeps this from re-breaking
-		-- every time a line is added to it.
-		fw.eq(
-			#env.Context.Mock.State.Prints - before,
-			#env.Addon.MatchState:Debug(),
-			"one NotifyWithPrefix call per debug line"
-		)
-	end)
-
-	fw.it("works with no arena entered, matching the standing rule that a diagnostic is never combat- or scope-gated", function()
-		-- A clean load prints nothing on its own (see TestSmoke.lua), so this is the command's
-		-- very first line.
-		SlashCmdList.MINIDAMPEN("debug")
-
-		fw.truthy(env.Context.Mock.State.Prints[1]:find("inScope=false", 1, true) ~= nil, "reports out of scope rather than erroring")
-	end)
-
-	fw.it("prints a widget's own text even though it carries a percent sign", function()
-		env.SoloShuffle = true
-		env.Enter()
-		env.SetRecordWidgets(3, 6, 1, { WinsText = "100% Ready" })
-
-		fw.no_error(function()
-			SlashCmdList.MINIDAMPEN("debug")
-		end, "a debug line that is not a safe format string")
-
-		local found = false
-
-		for _, line in ipairs(env.Context.Mock.State.Prints) do
-			if line:find("100% Ready", 1, true) then
-				found = true
-			end
-		end
-
-		fw.truthy(found, "the text reached chat unmangled")
-	end)
-end)
-
-fw.describe("MiniDampen - /minidampen log", function()
-	local env
-
-	fw.before_each(function()
-		env = Arena.Build()
-	end)
-
-	fw.it("starts off, so the capture costs a chat line to nobody who never asked for one", function()
-		fw.eq(_G.MiniDampenDB.Logging, false, "off out of the box")
-	end)
-
-	fw.it("turns the log on and back off", function()
-		SlashCmdList.MINIDAMPEN("log on")
-
-		fw.truthy(_G.MiniDampenDB.Logging, "on on request")
-
-		SlashCmdList.MINIDAMPEN("log off")
-
-		fw.falsy(_G.MiniDampenDB.Logging, "and back off again")
-	end)
-
-	fw.it("reports the setting on a bare log command", function()
-		local before = #env.Context.Mock.State.Prints
-
-		SlashCmdList.MINIDAMPEN("log")
-
-		local line = StripColor(env.Context.Mock.State.Prints[before + 1])
-
-		fw.truthy(line:find("Match logging is off.", 1, true) ~= nil, "says where the setting stands")
-	end)
-end)
-
 fw.describe("MiniDampen - /minidampen dampening", function()
 	local env
 
@@ -198,127 +116,18 @@ fw.describe("MiniDampen - /minidampen dampening", function()
 	end)
 end)
 
-fw.describe("MiniDampen - /minidampen probe", function()
+fw.describe("MiniDampen - saved variable retirement", function()
 	local env
 
 	fw.before_each(function()
 		env = Arena.Build()
 	end)
 
-	local function PrintedSince(before)
-		local prints = env.Context.Mock.State.Prints
-		local lines = {}
+	fw.it("clears the match logging flag 1.0.4 left in saved variables", function()
+		_G.MiniDampenDB.Logging = true
 
-		for i = before + 1, #prints do
-			lines[#lines + 1] = prints[i]
-		end
+		env.Reload()
 
-		return lines
-	end
-
-	local function FindLine(lines, needle)
-		for _, line in ipairs(lines) do
-			if line:find(needle, 1, true) then
-				return line
-			end
-		end
-	end
-
-	fw.it("prints something useful out of an arena rather than erroring", function()
-		local before = #env.Context.Mock.State.Prints
-
-		fw.no_error(function()
-			SlashCmdList.MINIDAMPEN("probe")
-		end, "probe outside an arena")
-
-		local lines = PrintedSince(before)
-
-		fw.truthy(#lines > 0, "at least one line printed")
-		fw.truthy(FindLine(lines, "instanceType=none") ~= nil, "says where it was run")
-	end)
-
-	fw.it("runs in an arena too", function()
-		env.Enter()
-
-		fw.no_error(function()
-			SlashCmdList.MINIDAMPEN("probe")
-		end, "probe inside an arena")
-	end)
-
-	fw.it("reports every aura the client hands back, on both filters", function()
-		env.AddAura("HELPFUL", { name = "Dampening", spellId = 110310, points = { 20 } })
-		env.AddAura("HARMFUL", { name = "Corruption", spellId = 172, points = {} })
-
-		local before = #env.Context.Mock.State.Prints
-
-		SlashCmdList.MINIDAMPEN("probe")
-
-		local lines = PrintedSince(before)
-		local helpful = FindLine(lines, "aura HELPFUL")
-		local harmful = FindLine(lines, "aura HARMFUL")
-
-		fw.not_nil(helpful, "the helpful aura was enumerated")
-		fw.truthy(helpful:find("name=Dampening", 1, true) ~= nil, "carries the aura name")
-		fw.truthy(helpful:find("spellId=110310", 1, true) ~= nil, "carries the spell id")
-		fw.truthy(helpful:find("points={20}", 1, true) ~= nil, "carries the whole points array")
-		fw.not_nil(harmful, "the harmful aura was enumerated too")
-	end)
-
-	fw.it("renders a secret aura field as \"secret\" rather than interpolating it", function()
-		env.AddAura("HELPFUL", { name = "Dampening", spellId = Arena.SECRET, points = Arena.SECRET })
-
-		local before = #env.Context.Mock.State.Prints
-
-		SlashCmdList.MINIDAMPEN("probe")
-
-		local line = FindLine(PrintedSince(before), "aura HELPFUL")
-
-		fw.truthy(line:find("spellId=secret", 1, true) ~= nil, "the secret spell id never reached tostring")
-		fw.truthy(line:find("points=secret", 1, true) ~= nil, "and the secret points array was never indexed")
-	end)
-
-	fw.it("names the top-center widgets and whatever their per-type getter returns", function()
-		env.WidgetSetId = 7
-		env.Widgets = { { widgetID = 42, widgetType = 0 } }
-		env.WidgetInfo = { text = "Dampening 20%", shownState = 1 }
-
-		local before = #env.Context.Mock.State.Prints
-
-		SlashCmdList.MINIDAMPEN("probe")
-
-		local lines = PrintedSince(before)
-
-		fw.truthy(
-			FindLine(lines, "widgetSet GetTopCenterWidgetSetID=7") ~= nil,
-			"reports the set id it queried, and the getter that named it"
-		)
-
-		local widget = FindLine(lines, "widget GetTopCenterWidgetSetID id=42")
-
-		fw.not_nil(widget, "the widget was listed")
-		fw.truthy(widget:find("(IconAndText)", 1, true) ~= nil, "named its visualization type")
-		fw.truthy(widget:find("text=Dampening 20%", 1, true) ~= nil, "a percent sign in widget text survives the chat path")
-	end)
-
-	fw.it("reports the commentator reading, and survives a spectator-only refusal", function()
-		env.CommentatorDampening = 30
-
-		local before = #env.Context.Mock.State.Prints
-
-		SlashCmdList.MINIDAMPEN("probe")
-
-		fw.truthy(
-			FindLine(PrintedSince(before), "C_Commentator.GetDampeningPercent=30") ~= nil,
-			"the commentator value is reported when it answers"
-		)
-
-		env.CommentatorRefuses = true
-		before = #env.Context.Mock.State.Prints
-
-		fw.no_error(function()
-			SlashCmdList.MINIDAMPEN("probe")
-		end, "a refused commentator call")
-
-		fw.truthy(FindLine(PrintedSince(before), "GetDampeningPercent refused") ~= nil, "the refusal is reported, not swallowed")
+		fw.is_nil(_G.MiniDampenDB.Logging, "nothing reads this key any more, so nothing is left behind")
 	end)
 end)

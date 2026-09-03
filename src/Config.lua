@@ -7,8 +7,6 @@ local db
 local dbDefaults = {
 	Enabled = true,
 	HideBlizzardWidgets = true,
-	-- The field capture /minidampen log asks a user to turn on.
-	Logging = false,
 	FontSize = 16,
 	-- false means the game's own default face; a shared media font name string otherwise.
 	FontFace = false,
@@ -30,6 +28,9 @@ function M:Init()
 	mini:SetCustomStyling(true, { Button = false })
 
 	db = mini:GetSavedVars(dbDefaults)
+
+	-- 1.0.4 removed match logging.
+	db.Logging = nil
 
 	local panel = CreateFrame("Frame")
 	panel.name = addonName
@@ -254,41 +255,6 @@ function M:Init()
 	SlashCmdList.MINIDAMPEN = function(msg)
 		msg = (msg or ""):lower():match("^%s*(.-)%s*$")
 
-		if msg == "debug" then
-			-- Never gated on combat, since reading these values mid-fight, where /dump itself
-			-- is refused, is the entire point of this command.
-			for _, line in ipairs(addon.MatchState:Debug()) do
-				-- Passed as an argument rather than as the format string, because a widget's own
-				-- text carries a literal percent sign.
-				mini:NotifyWithPrefix("%s", line)
-			end
-			return
-		elseif msg == "probe" then
-			for _, line in ipairs(addon.MatchState:Probe()) do
-				mini:NotifyWithPrefix("%s", line)
-			end
-			return
-		end
-
-		if msg == "log" then
-			mini:NotifyWithPrefix("Match logging is %s.", db.Logging and "on" or "off")
-			mini:NotifyWithPrefix("/minidampen log on or /minidampen log off")
-			return
-		end
-
-		local logArg = msg:match("^log%s+(.+)$")
-
-		if logArg then
-			if logArg ~= "on" and logArg ~= "off" then
-				mini:NotifyWithPrefix("/minidampen log on or /minidampen log off")
-				return
-			end
-
-			db.Logging = logArg == "on"
-			mini:NotifyWithPrefix("Match logging %s.", logArg)
-			return
-		end
-
 		if msg == "dampening" then
 			mini:NotifyWithPrefix("/minidampen dampening <percent> or /minidampen dampening clear")
 			return
@@ -315,10 +281,6 @@ function M:Init()
 
 		if msg ~= "" then
 			mini:NotifyWithPrefix("Commands:")
-			mini:NotifyWithPrefix("/minidampen debug")
-			mini:NotifyWithPrefix("/minidampen probe")
-			mini:NotifyWithPrefix("/minidampen log on")
-			mini:NotifyWithPrefix("/minidampen log off")
 			mini:NotifyWithPrefix("/minidampen dampening <percent>")
 			mini:NotifyWithPrefix("/minidampen dampening clear")
 			return

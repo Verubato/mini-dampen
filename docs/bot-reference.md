@@ -76,15 +76,6 @@ draws a single string, centred as a unit.
   moment a real match is in scope, so a forgotten preview can never be mistaken for what a
   live match is actually reading.
 - `/minidampen dampening clear`: clears a forced value.
-- `/minidampen debug`: prints every value the rows are built from to chat, in or out
-  of combat and in or out of an arena. See the Troubleshooting table below for when this is
-  the right tool.
-- `/minidampen probe`: prints the raw client data behind those values, in or out of an
-  arena.
-- `/minidampen log on`, `/minidampen log off`: turns the match log on or off, off by default.
-  With it on, every accepted or refused record reading and every match state change is printed
-  to chat as it happens, which is the field capture to ask a user for. `/minidampen log` alone
-  reports where the setting stands.
 
 ### Display
 
@@ -133,8 +124,7 @@ confirmation prompt.
 | Nothing shows in an arena | Check "Enabled". Click Test briefly to confirm the rows exist and draw with sample data. |
 | Dampening row is missing entirely | The dampening aura was unreadable this session (absent, secret, or not a number); the row hides rather than showing a blank or a zero. |
 | Enemy alive count seems to skip an opponent | Either it has been continuously out of sight for 1.5 seconds, drawn hidden without changing the count, or it disconnected or left and Blizzard cleared its visibility override, drawn the same way but this time subtracted from the count and marked with `?` since it can no longer be confirmed alive. A departed ally is handled the same way. |
-| Round record is missing in a solo shuffle | Either the client has not called the match a shuffle yet, or the two widgets could not be read. `/minidampen debug` shows `isSoloShuffle`, `rawIsSoloShuffle`, and a `record` line naming the reading or the reason it was refused, with the text of every live widget it saw. Both recover on their own once the client answers. |
-| Record is stuck one round short at the results screen | The board refused to book the final round, most often because it had not yet been credited when it was read. `/minidampen debug` shows `settled` and `asked` on the `isSoloShuffle=` line: `asked=true settled=false` means the request went out but nothing usable came back, and the record holds at the five-round figure rather than guessing at the split. |
+| Round record is missing in a solo shuffle | Either the client has not called the match a shuffle yet, or the two widgets could not be read. Both recover on their own once the client answers. |
+| Record is stuck one round short at the results screen | The board refused to book the final round, most often because it had not yet been credited when it was read. The record holds at the five-round figure rather than guessing at the split. |
 | Cannot move the display | Test mode is off. Click Test in the settings panel first. |
 | Blizzard's own arena widgets are gone | Expected while "Hide Blizzard" is on and you are in scope; they return to whatever alpha MiniDampen found them at on leaving, so they can come back dimmed if another addon had already dimmed them. |
-| Need to see the raw values behind any of the above | `/minidampen debug` prints them all to chat, including mid-fight where `/dump` itself is refused. See Slash commands above. |

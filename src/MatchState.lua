@@ -15,19 +15,11 @@ local MAX_TEAM_SIZE = 3
 -- renumbers them must not silently stop the record.
 local OBSERVED_ROUND_WIDGET_ID = 3521
 local OBSERVED_WINS_WIDGET_ID = 4457
--- /minidampen probe enumerates every aura on the player plus every widget set, so its output
--- is capped rather than flooding chat.
-local PROBE_LINE_LIMIT = 60
-local PROBE_AURA_SLOTS = 40
-local PROBE_FILTERS = { "HELPFUL", "HARMFUL" }
 local db
 local bootstrap
 local gated
 local ticker
 local lastMatchState
--- A reason that holds for a whole round would otherwise be logged on every widget update the
--- client fires.
-local lastRecordRefusal
 -- The board has given the exact final record, so nothing after it may move the record again.
 local recordSettled = false
 -- One request per match. A board that never arrives is not chased for.
@@ -63,227 +55,6 @@ M.OnChanged = nil
 local function Notify()
 	if M.OnChanged then
 		M.OnChanged()
-	end
-end
-
----Every diagnostic field is funnelled through here, so a value that turns out secret can never
----be interpolated straight into the line that is meant to be diagnosing it.
-local function SafeString(value)
-	if mini:IsSecret(value) then
-		return "secret"
-	end
-
-	return tostring(value)
-end
-
-local function LogEnabled()
-	return db ~= nil and db.Logging == true and state.inScope
-end
-
-local function Stamp()
-	local now = GetTime()
-
-	if mini:IsSecret(now) or type(now) ~= "number" then
-		return "?"
-	end
-
-	return string.format("%.2f", now)
-end
-
-local function LogLine(format, ...)
-	mini:NotifyWithPrefix("%s", string.format("[%s] " .. format, Stamp(), ...))
-end
-
----A throw here would cost the owner the very capture this exists to produce, so a bad line is
----dropped rather than taken out through the event handler that wrote it.
-local function Log(format, ...)
-	if not LogEnabled() then
-		return
-	end
-
-	pcall(LogLine, format, ...)
-end
-
----Appends a probe line, or the one truncation notice once the cap is reached.
-local function Append(lines, text)
-	if #lines > PROBE_LINE_LIMIT then
-		return
-	end
-
-	if #lines == PROBE_LINE_LIMIT then
-		lines[#lines + 1] = string.format("... capped at %d lines", PROBE_LINE_LIMIT)
-		return
-	end
-
-	lines[#lines + 1] = text
-end
-
----A diagnostic reports what each source does, so a section that throws is itself the result
----being collected. That is why this catches an error it cannot otherwise handle.
-local function SafeSection(lines, label, fn)
-	local ok, err = pcall(fn)
-
-	if not ok then
-		Append(lines, label .. " failed: " .. SafeString(err))
-	end
-end
-
----Reverses the visualization type enum so a widget can name its own per-type getter.
-local function WidgetTypeName(widgetType)
-	local types = Enum and Enum.UIWidgetVisualizationType
-
-	if type(types) ~= "table" then
-		return nil
-	end
-
-	for name, value in pairs(types) do
-		if value == widgetType then
-			return name
-		end
-	end
-end
-
----Some getters carry "Widget" in their name and some do not, so both spellings are tried.
-local function WidgetInfo(widgetId, typeName)
-	local getter = C_UIWidgetManager["Get" .. typeName .. "WidgetVisualizationInfo"]
-		or C_UIWidgetManager["Get" .. typeName .. "VisualizationInfo"]
-
-	if not getter then
-		return nil
-	end
-
-	return getter(widgetId)
-end
-
----Flattens whatever scalar fields a visualization info table happens to carry, since the shape
----differs per widget type and the interesting one is whichever holds a percentage.
-local function InfoText(info)
-	if mini:IsSecret(info) then
-		return "secret"
-	end
-
-	if type(info) ~= "table" then
-		return SafeString(info)
-	end
-
-	local parts = {}
-
-	for key, value in pairs(info) do
-		if mini:IsSecret(value) then
-			parts[#parts + 1] = tostring(key) .. "=secret"
-		elseif type(value) == "string" or type(value) == "number" or type(value) == "boolean" then
-			parts[#parts + 1] = tostring(key) .. "=" .. tostring(value)
-		end
-	end
-
-	table.sort(parts)
-
-	return table.concat(parts, " ")
-end
-
----Found by name rather than from a list of our own, so a set a later patch adds is dumped
----without a code change. Sorted, so two dumps can be read against each other.
-local function WidgetSetGetterNames()
-	local names = {}
-
-	for key, value in pairs(C_UIWidgetManager) do
-		if type(key) == "string" and type(value) == "function" and key:match("WidgetSetID$") then
-			names[#names + 1] = key
-		end
-	end
-
-	table.sort(names)
-
-	return names
-end
-
----Every widget in one set, each line naming the getter the set came from so the dump says
----where a widget lives.
-local function AppendSetWidgetLines(lines, getterName, setId)
-	local widgets = C_UIWidgetManager.GetAllWidgetsBySetID(setId)
-
-	if mini:IsSecret(widgets) or type(widgets) ~= "table" then
-		Append(lines, string.format("widgets %s %s", getterName, SafeString(widgets)))
-		return
-	end
-
-	for _, widget in ipairs(widgets) do
-		if mini:IsSecret(widget) or type(widget) ~= "table" then
-			Append(lines, string.format("widget %s secret", getterName))
-			break
-		end
-
-		local widgetId = widget.widgetID
-		local widgetType = widget.widgetType
-		local typeName = not mini:IsSecret(widgetType) and WidgetTypeName(widgetType) or nil
-		local info = (typeName and not mini:IsSecret(widgetId)) and WidgetInfo(widgetId, typeName) or nil
-
-		Append(
-			lines,
-			string.format(
-				"widget %s id=%s type=%s (%s) %s",
-				getterName,
-				SafeString(widgetId),
-				SafeString(widgetType),
-				SafeString(typeName),
-				InfoText(info)
-			)
-		)
-	end
-end
-
----Two getters can name the same set, so whichever asked first is the one that enumerates it.
-local function AppendWidgetSet(lines, getterName, setId, seen)
-	Append(lines, string.format("widgetSet %s=%s", getterName, SafeString(setId)))
-
-	if mini:IsSecret(setId) or type(setId) ~= "number" or seen[setId] then
-		return
-	end
-
-	seen[setId] = true
-
-	SafeSection(lines, "widgets " .. getterName, function()
-		AppendSetWidgetLines(lines, getterName, setId)
-	end)
-end
-
----The leading argument is pcall's own status, and a getter can name more than one set, so every
----return after it is taken.
-local function AppendGetterSets(lines, getterName, seen, ok, ...)
-	if not ok then
-		Append(lines, string.format("widgetSet %s failed: %s", getterName, SafeString((...))))
-		return
-	end
-
-	local count = select("#", ...)
-
-	if count == 0 then
-		Append(lines, string.format("widgetSet %s names none", getterName))
-		return
-	end
-
-	for i = 1, count do
-		AppendWidgetSet(lines, getterName, (select(i, ...)), seen)
-	end
-end
-
-local function AppendWidgetLines(lines)
-	if type(C_UIWidgetManager) ~= "table" then
-		Append(lines, "widgets C_UIWidgetManager unavailable")
-		return
-	end
-
-	local names = WidgetSetGetterNames()
-
-	if #names == 0 then
-		Append(lines, "widgets no set getters")
-		return
-	end
-
-	local seen = {}
-
-	for _, name in ipairs(names) do
-		AppendGetterSets(lines, name, seen, pcall(C_UIWidgetManager[name]))
 	end
 end
 
@@ -419,53 +190,51 @@ end
 
 ---Sorts every live widget in the top-center set by the shape of its text. Only the digits are
 ---matched, since the words around them do not survive translation.
----@return table? found, string? refusal
+---@return table? found
 local function CollectRecordCandidates()
 	local setId = C_UIWidgetManager.GetTopCenterWidgetSetID()
 
 	if mini:IsSecret(setId) then
-		return nil, "secret set id"
+		return nil
 	end
 
 	if type(setId) ~= "number" then
-		return nil, "no set id"
+		return nil
 	end
 
 	local widgets = C_UIWidgetManager.GetAllWidgetsBySetID(setId)
 
 	if mini:IsSecret(widgets) then
-		return nil, "secret widget list"
+		return nil
 	end
 
 	if type(widgets) ~= "table" then
-		return nil, "no widget list"
+		return nil
 	end
 
-	local found = { rounds = {}, wins = {}, seen = {} }
+	local found = { rounds = {}, wins = {} }
 
 	for _, widget in ipairs(widgets) do
 		local secret, info, widgetId = LiveWidgetInfo(widget)
 
 		if secret then
-			return nil, "secret widget"
+			return nil
 		end
 
 		if info then
 			local text = info.text
 
 			if mini:IsSecret(text) then
-				return nil, "secret text"
+				return nil
 			end
 
 			local hasTimer = info.hasTimer
 
 			if mini:IsSecret(hasTimer) then
-				return nil, "secret timer flag"
+				return nil
 			end
 
 			if type(text) == "string" then
-				found.seen[#found.seen + 1] = string.format("%d=%s", widgetId, text)
-
 				local round, total = text:match("(%d+)%s*/%s*(%d+)")
 				local only = text:match("^%D*(%d+)%D*$")
 
@@ -501,27 +270,26 @@ local function PickCandidate(candidates, observedId)
 end
 
 ---The whole reading or none of it, so the display never draws half a record.
----@return table? reading, string? refusal, string seen
+---@return table? reading
 local function ReadRecordWidgets()
 	if type(C_UIWidgetManager) ~= "table" then
-		return nil, "no widget api", ""
+		return nil
 	end
 
-	local found, refusal = CollectRecordCandidates()
+	local found = CollectRecordCandidates()
 
 	if not found then
-		return nil, refusal, ""
+		return nil
 	end
 
-	local seen = table.concat(found.seen, " ")
 	local round = PickCandidate(found.rounds, OBSERVED_ROUND_WIDGET_ID)
 
 	if not round then
-		return nil, #found.rounds > 1 and "round widget ambiguous" or "no round widget", seen
+		return nil
 	end
 
 	if round.round < 1 or round.round > round.total or round.total > MAX_ROUNDS then
-		return nil, "round out of range", seen
+		return nil
 	end
 
 	local wins = PickCandidate(found.wins, OBSERVED_WINS_WIDGET_ID)
@@ -530,25 +298,23 @@ local function ReadRecordWidgets()
 		-- No round can have finished before round one, so the record is exactly 0W-0L whether
 		-- or not the client has put a wins widget up yet.
 		if round.round == 1 then
-			return { round = round.round, total = round.total, wins = 0, roundId = round.id, winsId = nil }, nil, seen
+			return { round = round.round, total = round.total, wins = 0 }
 		end
 
-		return nil, #found.wins > 1 and "wins widget ambiguous" or "no wins widget", seen
+		return nil
 	end
 
 	-- Bounded by the round played, not the total: a round-six reading of Wins: 6 would commit
 	-- 6W-0L before completion, and the real board of 5 would then be refused as backwards.
 	if wins.wins < 0 or wins.wins > round.round then
-		return nil, "wins out of range", seen
+		return nil
 	end
 
 	return {
 		round = round.round,
 		total = round.total,
 		wins = wins.wins,
-		roundId = round.id,
-		winsId = wins.id,
-	}, nil, seen
+	}
 end
 
 ---The scoreboard reports a "Name-Realm" the player's own token answers without.
@@ -563,24 +329,24 @@ end
 ---Every row has to read, since a total missing one player's wins divides into a round count
 ---that is simply wrong.
 local function SummariseScoreboard()
-	local summary = { rows = {}, total = 0, ownRows = 0 }
+	local summary = { total = 0, ownRows = 0 }
 
 	if type(GetNumBattlefieldScores) ~= "function" or type(C_PvP.GetScoreInfo) ~= "function" then
-		summary.refused = "no score api"
+		summary.refused = true
 		return summary
 	end
 
 	local playerName = UnitName("player")
 
 	if mini:IsSecret(playerName) or type(playerName) ~= "string" then
-		summary.refused = "own name unreadable"
+		summary.refused = true
 		return summary
 	end
 
 	local count = GetNumBattlefieldScores()
 
 	if mini:IsSecret(count) or type(count) ~= "number" then
-		summary.refused = "row count unreadable"
+		summary.refused = true
 		return summary
 	end
 
@@ -588,14 +354,14 @@ local function SummariseScoreboard()
 		local info = C_PvP.GetScoreInfo(i)
 
 		if mini:IsSecret(info) or type(info) ~= "table" then
-			summary.refused = "row unreadable"
+			summary.refused = true
 			return summary
 		end
 
 		local stats = info.stats
 
 		if mini:IsSecret(stats) or type(stats) ~= "table" then
-			summary.refused = "row stats unreadable"
+			summary.refused = true
 			return summary
 		end
 
@@ -603,32 +369,26 @@ local function SummariseScoreboard()
 		local stat = stats[1]
 
 		if mini:IsSecret(stat) or type(stat) ~= "table" then
-			summary.refused = "wins stat unreadable"
+			summary.refused = true
 			return summary
 		end
 
 		local wins = stat.pvpStatValue
 
 		if mini:IsSecret(wins) or type(wins) ~= "number" then
-			summary.refused = "wins unreadable"
+			summary.refused = true
 			return summary
 		end
 
 		local own = IsPlayerRow(info.name, playerName)
 
-		summary.rows[i] = { name = info.name, wins = wins, own = own }
 		summary.total = summary.total + wins
 
 		if own then
 			summary.ownWins = wins
-			summary.ownStats = stats
 			summary.ownRows = summary.ownRows + 1
 		end
 	end
-
-	-- Every round produces exactly one winner per team slot, and a shuffle is always three a
-	-- side, so the whole board's wins divide into the rounds played.
-	summary.rounds = math.min(math.floor(summary.total / MAX_TEAM_SIZE), MAX_ROUNDS)
 
 	return summary
 end
@@ -651,35 +411,35 @@ end
 
 ---The server's own count of the rounds this player won, taken only where the whole board adds up
 ---to the rounds the widgets say were played.
----@return number? wins, string? refusal
+---@return number? wins
 local function BoardWins(played, floor)
 	local summary = SummariseScoreboard()
 
 	if summary.refused then
-		return nil, "board " .. summary.refused
+		return nil
 	end
 
 	-- Two players can share a name across realms, and picking the wrong one's wins would draw a
 	-- record that looks real.
 	if summary.ownRows ~= 1 then
-		return nil, "board own row ambiguous"
+		return nil
 	end
 
 	-- Every round credits one win per team slot, so a board still crediting the last round does
 	-- not add up to the rounds that were played.
 	if summary.total ~= played * MAX_TEAM_SIZE then
-		return nil, "board does not add up"
+		return nil
 	end
 
 	-- The wins widget never overstates, so a board under it is the one that is wrong.
 	if summary.ownWins < floor or summary.ownWins > played then
-		return nil, "board contradicts the widgets"
+		return nil
 	end
 
 	-- A board this shape can also be a cached one from the match just left, since every
 	-- completed shuffle sums to the same eighteen and the floor rarely rules a stale one out.
 	if not scoreArrived then
-		return nil, "board not yet reported"
+		return nil
 	end
 
 	return summary.ownWins
@@ -699,17 +459,6 @@ local function RequestBoardOnce()
 	end
 end
 
----Logged once per reason, since a widget that will not read stays that way for a whole round
----while UPDATE_UI_WIDGET keeps firing.
-local function RefuseRecord(reason, seen)
-	if reason ~= lastRecordRefusal then
-		lastRecordRefusal = reason
-		Log("record refused %s saw=%s", reason, seen)
-	end
-
-	return false
-end
-
 ---The final round is booked from the board, since the wins widget never takes it.
 ---@return boolean changed
 local function ReadRecord()
@@ -717,7 +466,7 @@ local function ReadRecord()
 		return false
 	end
 
-	local reading, refusal, seen = ReadRecordWidgets()
+	local reading = ReadRecordWidgets()
 	local matchState = C_PvP.GetActiveMatchState()
 
 	if not reading then
@@ -725,7 +474,7 @@ local function ReadRecord()
 		-- accepted reading already proved the round count, so the board is still worth asking.
 		if matchState ~= Enum.PvPMatchState.Complete or not state.roundIndex or not state.roundTotal
 			or state.roundIndex ~= state.roundTotal then
-			return RefuseRecord(refusal, seen)
+			return false
 		end
 
 		reading = { round = state.roundIndex, total = state.roundTotal, wins = state.recordWins }
@@ -734,19 +483,19 @@ local function ReadRecord()
 	local played = PlayedRounds(matchState, reading.round, reading.total)
 	local wins = reading.wins
 	local completed = played
-	local source = "widgets"
+	local fromBoard = false
 
 	if IsFinalRound(matchState, reading.round, reading.total) then
 		RequestBoardOnce()
 
-		local boardWins, boardRefusal = BoardWins(played, wins)
+		local boardWins = BoardWins(played, wins)
 
 		if not boardWins then
-			return RefuseRecord(boardRefusal, seen)
+			return false
 		end
 
 		wins = boardWins
-		source = "board"
+		fromBoard = true
 	else
 		completed = math.max(played, wins)
 	end
@@ -757,10 +506,8 @@ local function ReadRecord()
 	-- A widget or board caught part way through its own update can read behind the record
 	-- already drawn.
 	if wins < won or completed < settled then
-		return RefuseRecord("backwards", seen)
+		return false
 	end
-
-	lastRecordRefusal = nil
 
 	local losses = completed - wins
 	local changed = state.roundIndex ~= reading.round
@@ -773,22 +520,8 @@ local function ReadRecord()
 	state.recordWins = wins
 	state.recordLosses = losses
 
-	if source == "board" then
+	if fromBoard then
 		recordSettled = true
-	end
-
-	if changed then
-		Log(
-			"record round=%s/%s wins=%s completed=%s roundId=%s winsId=%s source=%s widgetWins=%s",
-			reading.round,
-			reading.total,
-			wins,
-			completed,
-			SafeString(reading.roundId),
-			SafeString(reading.winsId),
-			source,
-			reading.wins
-		)
 	end
 
 	return changed
@@ -957,14 +690,6 @@ local function OnMatchStateChanged()
 	-- with no widget having moved.
 	ReadRecord()
 
-	Log(
-		"state %s -> %s round=%s shuffle=%s",
-		SafeString(lastMatchState),
-		SafeString(newState),
-		SafeString(state.roundIndex),
-		SafeString(state.isSoloShuffle)
-	)
-
 	lastMatchState = newState
 	Notify()
 end
@@ -1049,7 +774,6 @@ local function OpenScope()
 	state.roundTotal = nil
 	state.recordWins = nil
 	state.recordLosses = nil
-	lastRecordRefusal = nil
 	recordSettled = false
 	scoreAsked = false
 	scoreArrived = false
@@ -1066,8 +790,6 @@ local function OpenScope()
 
 	ticker = C_Timer.NewTicker(POLL_INTERVAL, Poll)
 
-	Log("scope open")
-
 	-- Nothing is persisted across a reload, so the record comes back from the client rather than
 	-- waiting for the next event to ask for it.
 	ReadRecord()
@@ -1075,9 +797,6 @@ local function OpenScope()
 end
 
 local function CloseScope()
-	-- Written before inScope drops, which is what the log itself is gated on.
-	Log("scope close")
-
 	state.inScope = false
 	state.isSoloShuffle = false
 	state.teamSize = 0
@@ -1088,7 +807,6 @@ local function CloseScope()
 	state.roundTotal = nil
 	state.recordWins = nil
 	state.recordLosses = nil
-	lastRecordRefusal = nil
 	recordSettled = false
 	scoreAsked = false
 	scoreArrived = false
@@ -1102,170 +820,6 @@ local function CloseScope()
 	end
 
 	Notify()
-end
-
----Renders an aura's points array, which is where a dampening percentage would sit.
-local function PointsText(points)
-	if mini:IsSecret(points) then
-		return "secret"
-	end
-
-	if type(points) ~= "table" then
-		return SafeString(points)
-	end
-
-	local parts = {}
-
-	for i = 1, #points do
-		parts[i] = SafeString(points[i])
-	end
-
-	return "{" .. table.concat(parts, ",") .. "}"
-end
-
----The first vararg is GetAuraSlots' continuation token rather than a slot. One page is enough
----for a probe, so the token is dropped instead of paged through.
-local function AppendSlotLines(lines, filter, ...)
-	for i = 2, select("#", ...) do
-		local aura = C_UnitAuras.GetAuraDataBySlot("player", (select(i, ...)))
-
-		if mini:IsSecret(aura) then
-			Append(lines, string.format("aura %s secret", filter))
-		elseif type(aura) == "table" then
-			Append(
-				lines,
-				string.format(
-					"aura %s name=%s spellId=%s points=%s",
-					filter,
-					SafeString(aura.name),
-					SafeString(aura.spellId),
-					PointsText(aura.points)
-				)
-			)
-		end
-	end
-end
-
-local function AppendAuraLines(lines, filter)
-	if type(C_UnitAuras.GetAuraSlots) ~= "function" or type(C_UnitAuras.GetAuraDataBySlot) ~= "function" then
-		Append(lines, "aura slot enumeration unavailable")
-		return
-	end
-
-	AppendSlotLines(lines, filter, C_UnitAuras.GetAuraSlots("player", filter, PROBE_AURA_SLOTS))
-end
-
----GetDampeningPercent is documented without a spectator gate, but it lives in the commentator
----namespace, so a refusal is caught rather than killing the rest of the probe.
-local function AppendCommentatorLine(lines)
-	if type(C_Commentator) ~= "table" or type(C_Commentator.GetDampeningPercent) ~= "function" then
-		Append(lines, "C_Commentator.GetDampeningPercent unavailable")
-		return
-	end
-
-	local ok, percent = pcall(C_Commentator.GetDampeningPercent)
-
-	if not ok then
-		Append(lines, "C_Commentator.GetDampeningPercent refused")
-		return
-	end
-
-	Append(lines, string.format("C_Commentator.GetDampeningPercent=%s", SafeString(percent)))
-end
-
----Names the wins column by id as well as by position, since nothing else proves position 1 is
----the column the record is read from.
-local function AppendStatColumnLines(lines, summary)
-	if not mini:IsSecret(summary.ownStats) and type(summary.ownStats) == "table" then
-		for i, stat in ipairs(summary.ownStats) do
-			if mini:IsSecret(stat) or type(stat) ~= "table" then
-				Append(lines, string.format("score ownStat %d %s", i, SafeString(stat)))
-			else
-				Append(
-					lines,
-					string.format(
-						"score ownStat %d id=%s value=%s",
-						i,
-						SafeString(stat.pvpStatID),
-						SafeString(stat.pvpStatValue)
-					)
-				)
-			end
-		end
-	end
-
-	if type(C_PvP.GetMatchPVPStatColumns) ~= "function" then
-		Append(lines, "score columns unavailable")
-		return
-	end
-
-	local columns = C_PvP.GetMatchPVPStatColumns()
-
-	if mini:IsSecret(columns) or type(columns) ~= "table" then
-		Append(lines, string.format("score columns=%s", SafeString(columns)))
-		return
-	end
-
-	for i, column in ipairs(columns) do
-		Append(lines, string.format("score column %d %s", i, InfoText(column)))
-	end
-end
-
----Reports the board itself, so a wrong record can be traced to the reading it came from rather
----than guessed at from the numbers it settled on.
-local function AppendScoreLines(lines)
-	local summary = SummariseScoreboard()
-
-	Append(
-		lines,
-		string.format(
-			"score total=%s rounds=%s ownWins=%s ownRows=%s refused=%s",
-			SafeString(summary.total),
-			SafeString(summary.rounds),
-			SafeString(summary.ownWins),
-			SafeString(summary.ownRows),
-			SafeString(summary.refused)
-		)
-	)
-
-	for i, row in ipairs(summary.rows) do
-		Append(
-			lines,
-			string.format(
-				"score row %d name=%s wins=%s own=%s",
-				i,
-				SafeString(row.name),
-				SafeString(row.wins),
-				SafeString(row.own)
-			)
-		)
-	end
-
-	AppendStatColumnLines(lines, summary)
-end
-
----The same reading the record is taken from, without committing it, so a blank record can be
----pasted out of one command rather than captured with the log.
-local function AppendRecordLines(lines)
-	local reading, refusal, seen = ReadRecordWidgets()
-
-	if not reading then
-		Append(lines, string.format("record refused=%s saw=%s", refusal, seen))
-		return
-	end
-
-	Append(
-		lines,
-		string.format(
-			"record round=%s/%s wins=%s roundId=%s winsId=%s saw=%s",
-			reading.round,
-			reading.total,
-			reading.wins,
-			SafeString(reading.roundId),
-			SafeString(reading.winsId),
-			seen
-		)
-	)
 end
 
 ---In scope from the moment a match leaves Inactive until the player leaves the arena, so the
@@ -1289,164 +843,6 @@ end
 
 function M:Evaluate()
 	EvaluateGate()
-end
-
----Reads everything /minidampen debug needs to tell a real reading from a preview, or a gate
----defect from an empty arena, without a round trip.
-function M:Debug()
-	local lines = {}
-	local _, instanceType = IsInInstance()
-	local matchState = C_PvP.GetActiveMatchState()
-	local specs = GetNumArenaOpponentSpecs and GetNumArenaOpponentSpecs()
-	local opponents = GetNumArenaOpponents and GetNumArenaOpponents()
-	local group = GetNumGroupMembers and GetNumGroupMembers()
-
-	lines[#lines + 1] = string.format(
-		"inScope=%s testMode=%s instanceType=%s matchState=%s",
-		SafeString(state.inScope),
-		SafeString(addon.Display:IsTestMode()),
-		SafeString(instanceType),
-		SafeString(matchState)
-	)
-
-	local source
-
-	if addon.Display:IsTestMode() then
-		source = "sample (test preview)"
-	elseif state.inScope then
-		source = "live"
-	else
-		source = "none, out of scope and not testing"
-	end
-
-	lines[#lines + 1] = string.format("onScreenValues=%s", source)
-
-	lines[#lines + 1] = string.format(
-		"teamSize=%s allyCount=%s enemyCount=%s GetNumArenaOpponents=%s GetNumArenaOpponentSpecs=%s GetNumGroupMembers=%s",
-		SafeString(state.teamSize),
-		SafeString(#state.ally),
-		SafeString(#state.enemy),
-		SafeString(opponents),
-		SafeString(specs),
-		SafeString(group)
-	)
-
-	-- Sits above the dampening line because that one calls the commentator API unguarded, and a
-	-- refusal there would cost the user the whole paste this line exists to give them.
-	local rawShuffle
-
-	if type(C_PvP.IsSoloShuffle) == "function" then
-		rawShuffle = C_PvP.IsSoloShuffle()
-	end
-
-	local bracket
-
-	if type(C_PvP.GetActiveMatchBracket) == "function" then
-		bracket = C_PvP.GetActiveMatchBracket()
-	end
-
-	lines[#lines + 1] = string.format(
-		"isSoloShuffle=%s rawIsSoloShuffle=%s bracket=%s roundIndex=%s roundTotal=%s recordWins=%s recordLosses=%s settled=%s asked=%s",
-		SafeString(state.isSoloShuffle),
-		SafeString(rawShuffle),
-		SafeString(bracket),
-		SafeString(state.roundIndex),
-		SafeString(state.roundTotal),
-		SafeString(state.recordWins),
-		SafeString(state.recordLosses),
-		SafeString(recordSettled),
-		SafeString(scoreAsked)
-	)
-
-	SafeSection(lines, "record", function()
-		AppendRecordLines(lines)
-	end)
-
-	SafeSection(lines, "scoreboard", function()
-		AppendScoreLines(lines)
-	end)
-
-	-- Mirrors ReadDampening's own guard order, so a secret reading is never indexed further
-	-- here either.
-	local apiAvailable = type(C_Commentator) == "table" and type(C_Commentator.GetDampeningPercent) == "function"
-	local rawValue, rawSecret
-
-	if apiAvailable then
-		rawValue = C_Commentator.GetDampeningPercent()
-		rawSecret = mini:IsSecret(rawValue)
-	end
-
-	lines[#lines + 1] = string.format(
-		"dampening displayed=%s apiAvailable=%s rawValue=%s rawSecret=%s",
-		SafeString(state.dampening),
-		SafeString(apiAvailable),
-		SafeString(rawValue),
-		SafeString(rawSecret)
-	)
-
-	lines[#lines + 1] = string.format("forcedDampening=%s", SafeString(addon.Display:GetForcedDampening()))
-
-	for _, entry in ipairs(state.ally) do
-		lines[#lines + 1] = string.format(
-			"ally %s alive=%s hidden=%s cleared=%s everDead=%s deathSecret=%s feigning=%s",
-			SafeString(entry.Token),
-			SafeString(entry.Alive),
-			SafeString(entry.Hidden),
-			SafeString(entry.Cleared),
-			SafeString(entry.EverDead),
-			SafeString(entry.DeathSecret),
-			SafeString(entry.Feigning)
-		)
-	end
-
-	for _, entry in ipairs(state.enemy) do
-		lines[#lines + 1] = string.format(
-			"enemy %s alive=%s hidden=%s cleared=%s everDead=%s deathSecret=%s feigning=%s",
-			SafeString(entry.Token),
-			SafeString(entry.Alive),
-			SafeString(entry.Hidden),
-			SafeString(entry.Cleared),
-			SafeString(entry.EverDead),
-			SafeString(entry.DeathSecret),
-			SafeString(entry.Feigning)
-		)
-	end
-
-	return lines
-end
-
----Dumps every place retail could be keeping the dampening number: the player's own auras, every
----widget set, and the commentator API. Nothing here feeds the display.
-function M:Probe()
-	local lines = {}
-	local _, instanceType = IsInInstance()
-
-	Append(
-		lines,
-		string.format(
-			"probe instanceType=%s inScope=%s",
-			SafeString(instanceType),
-			SafeString(state.inScope)
-		)
-	)
-
-	-- Ordered by value, with the section known to throw in an active match last, so a live
-	-- arena still reports the commentator reading and the widget dump.
-	SafeSection(lines, "commentator", function()
-		AppendCommentatorLine(lines)
-	end)
-
-	SafeSection(lines, "widgets", function()
-		AppendWidgetLines(lines)
-	end)
-
-	for _, filter in ipairs(PROBE_FILTERS) do
-		SafeSection(lines, "aura " .. filter, function()
-			AppendAuraLines(lines, filter)
-		end)
-	end
-
-	return lines
 end
 
 function M:Init()
