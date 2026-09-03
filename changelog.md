@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4
+
+Fixed incorrect win/loss in shuffle.
+
 ## 1.0.3
 
 Fixed the solo shuffle record showing the previous round's result, which reported some

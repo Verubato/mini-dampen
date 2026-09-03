@@ -3,7 +3,7 @@
 ## Notes: Shows a team alive-count, the current dampening percentage, and your solo shuffle round record in arena.
 ## Category: Mini
 ## Author: Verz
-## Version: 1.0.3
+## Version: 1.0.4
 ## SavedVariables: MiniDampenDB
 ## IconTexture: Interface\AddOns\MiniDampen\Icon.blp
 ## X-Curse-Project-ID: 1673996
