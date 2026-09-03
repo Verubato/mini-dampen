@@ -142,19 +142,9 @@ fw.describe("MiniDampen - round record value text", function()
 		env.Enter()
 	end)
 
-	local function round(winner)
-		env.SetState(2) -- StartUp
-		env.SetState(3) -- Engaged
-		env.SetWinner(winner)
-		env.SetState(4) -- PostRound
-	end
-
 	fw.it("renders wins against losses, the wins in the won colour and the losses in the lost one", function()
-		round(0) -- win
-		round(0) -- win
-		round(1) -- loss
-		round(1) -- loss
-		env.Addon.Display:Refresh()
+		env.SetRecordWidgets(5, 6, 2)
+		env.FireWidgetUpdate()
 
 		local text = env.Addon.Display.CountsBlock.Value:GetText()
 
@@ -164,13 +154,11 @@ fw.describe("MiniDampen - round record value text", function()
 	end)
 
 	fw.it("puts the current round on its own row below the record", function()
-		round(0)
-		env.SetState(2) -- StartUp, round two
-		env.SetState(3) -- Engaged
-		env.Addon.Display:Refresh()
+		env.SetRecordWidgets(2, 6, 1)
+		env.FireWidgetUpdate()
 
 		fw.truthy(env.Addon.Display.RoundBlock.Frame:IsShown(), "the round row is drawn alongside the record")
-		fw.eq(StripColor(env.Addon.Display.RoundBlock.Value:GetText()), "Round 2/6", "reads the current round out of the six a shuffle always runs")
+		fw.eq(StripColor(env.Addon.Display.RoundBlock.Value:GetText()), "Round 2/6", "reads the current round and the total off the widget")
 		fw.truthy(env.Addon.Display.RoundBlock.Value:GetText():find(ColorCode(env.Addon.Colors.ROUND_NUMBER) .. "2/6", 1, true), "with the fraction coloured apart from its label")
 
 		local _, _, _, _, recordY = env.Addon.Display.CountsBlock.Frame:GetPoint(1)
@@ -179,61 +167,20 @@ fw.describe("MiniDampen - round record value text", function()
 		fw.truthy(roundY < recordY, "the round row sits below the record, not above it")
 	end)
 
-	fw.it("shows ? for the win count when a round settled unknown", function()
-		env.SetWinner(nil)
-		env.SetState(2)
-		env.SetState(3)
-		env.Cleared("arena1") -- never latches dead, so the corpse latch can't decide either
-		env.SetState(4)
-		env.Addon.Display:Refresh()
+	fw.it("takes the round line's total from the widget rather than the display's own constant", function()
+		env.SetRecordWidgets(2, 3, 1)
+		env.FireWidgetUpdate()
 
-		local text = StripColor(env.Addon.Display.CountsBlock.Value:GetText())
-
-		fw.eq(text, "0W - 0L?", "the tally reads ? rather than a wrong number")
-	end)
-end)
-
-fw.describe("MiniDampen - round record from the scoreboard", function()
-	local env
-
-	fw.before_each(function()
-		env = Arena.Build()
-		env.SoloShuffle = true
-		env.Enter()
+		fw.eq(StripColor(env.Addon.Display.RoundBlock.Value:GetText()), "Round 2/3", "whatever the widget says the match runs to")
 	end)
 
-	fw.it("draws the scoreboard's record rather than the rounds settled so far, and marks no ?", function()
-		env.Scores = {
-			{ Name = Arena.PLAYER_NAME, Wins = 1 },
-			{ Name = "Allyone", Wins = 3 },
-			{ Name = "Allytwo", Wins = 2 },
-			{ Name = "Foeone", Wins = 1 },
-			{ Name = "Foetwo", Wins = 1 },
-			{ Name = "Foethree", Wins = 1 },
-		}
-		env.SetState(2) -- StartUp
-		env.SetState(3) -- Engaged
-		env.SetWinner(0) -- one settled win, which is the record the fallback would draw
-		env.SetState(4) -- PostRound
-		env.FireScoreUpdate()
+	fw.it("draws the alive counts and no round line until a reading is accepted", function()
+		env.SetRecordWidgets(3, 6, 1, { NoWins = true })
+		env.FireWidgetUpdate()
 		env.Addon.Display:Refresh()
 
-		local text = env.Addon.Display.CountsBlock.Value:GetText()
-
-		fw.eq(StripColor(text), "1W - 2L", "one win of the scoreboard's three rounds")
-		fw.falsy(text:find("?", 1, true), "a scoreboard reading is complete, so nothing is marked unknown")
-	end)
-
-	fw.it("keeps drawing the settled rounds, ? and all, when no scoreboard reading landed", function()
-		env.SetWinner(nil)
-		env.SetState(2)
-		env.SetState(3)
-		env.Cleared("arena1") -- never latches dead, so the corpse latch can't decide either
-		env.SetState(4)
-		env.Addon.Display:Refresh()
-
-		fw.is_nil(env.Addon.MatchState.State.scoreRounds, "an empty scoreboard read nothing")
-		fw.eq(StripColor(env.Addon.Display.CountsBlock.Value:GetText()), "0W - 0L?", "the settled tally is untouched")
+		fw.falsy(env.Addon.Display.RoundBlock.Frame:IsShown(), "no round line without a record behind it")
+		fw.eq(StripColor(env.Addon.Display.CountsBlock.Value:GetText()), "3 vs 3", "the alive counts stand in")
 	end)
 end)
 
@@ -508,8 +455,8 @@ fw.describe("MiniDampen - container layout", function()
 		local shuffle = Arena.Build()
 		shuffle.SoloShuffle = true
 		shuffle.Enter()
-		shuffle.SetState(2) -- StartUp
-		shuffle.SetState(3) -- Engaged, so the round line has a number to draw
+		shuffle.SetRecordWidgets(1, 6, 0)
+		shuffle.FireWidgetUpdate() -- so the round line has a number to draw
 		shuffle.SetDampening(10)
 		shuffle.Tick(0.5)
 
@@ -537,12 +484,13 @@ fw.describe("MiniDampen - container layout", function()
 		local late = Arena.Build()
 		late.SoloShuffle = false
 		late.Enter()
-		late.SetState(2) -- StartUp, with the client still not calling it a shuffle
+		late.SetRecordWidgets(1, 6, 0)
+		late.FireWidgetUpdate() -- with the client still not calling it a shuffle
 
 		fw.falsy(late.Addon.Display.RoundBlock.Frame:IsShown(), "no round line while the client still says it is not a shuffle")
 
 		late.SoloShuffle = true
-		late.SetState(3) -- Engaged, so roundIndex becomes 1 and the flag is asked again
+		late.FireWidgetUpdate() -- the flag is asked again, and the widgets read this time
 
 		fw.truthy(late.Addon.Display.RoundBlock.Frame:IsShown(), "the round line appears once the client answers")
 		fw.eq(StripColor(late.Addon.Display.RoundBlock.Value:GetText()), "Round 1/6", "reading the round it already counted")

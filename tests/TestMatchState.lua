@@ -1,10 +1,10 @@
 -- MatchState.lua never draws anything, so these drive it entirely through tests/Helpers/Arena.lua
--- and read back state.ally, state.enemy, state.roundIndex, and state.roundResults.
+-- and read back state.ally, state.enemy, and the four fields the round record is carried in.
 
 local fw = require("TestFramework")
 local Arena = require("Arena")
 
-local GATED_EVENT_COUNT = 7
+local GATED_EVENT_COUNT = 8
 
 local function gatedFrame(env)
 	for _, frame in ipairs(env.Context.Mock.Frames) do
@@ -38,13 +38,14 @@ fw.describe("MiniDampen - scope gate", function()
 		fw.eq(#env.Tickers, 0, "no ticker created")
 	end)
 
-	fw.it("registers exactly the seven gated events and one ticker on entering", function()
+	fw.it("registers exactly the eight gated events and one ticker on entering", function()
 		env.Enter()
 
 		local frame = gatedFrame(env)
 
 		fw.not_nil(frame, "the gated frame registered ARENA_OPPONENT_UPDATE")
 		fw.eq(countEvents(frame), GATED_EVENT_COUNT, "event count")
+		fw.not_nil(frame.__events["UPDATE_BATTLEFIELD_SCORE"], "the board event is among them")
 		fw.eq(#env.Tickers, 1, "one ticker created")
 	end)
 
@@ -79,15 +80,18 @@ fw.describe("MiniDampen - scope gate", function()
 		fw.truthy(env.Addon.MatchState.State.inScope, "opened once the match left Inactive")
 	end)
 
-	fw.it("closes scope once the match reaches Complete, not only Inactive", function()
+	fw.it("stays open once the match reaches Complete, and closes when the player leaves", function()
 		env.Enter()
 		env.SetState(2) -- StartUp
 		env.SetState(3) -- Engaged
-		env.SetWinner(0)
 		env.SetState(4) -- PostRound
 		env.SetState(5) -- Complete
 
-		fw.falsy(env.Addon.MatchState.State.inScope, "closed once the results screen is up")
+		fw.truthy(env.Addon.MatchState.State.inScope, "the finished record stays up over the results screen")
+
+		env.Leave()
+
+		fw.falsy(env.Addon.MatchState.State.inScope, "closed on leaving the arena")
 	end)
 
 	fw.it("closes immediately when Evaluate runs after Enabled turns false", function()
@@ -275,27 +279,9 @@ fw.describe("MiniDampen - visibility", function()
 
 		fw.truthy(env.Addon.MatchState.State.enemy[2].EverDead, "a secret reading can't clear the latch")
 	end)
-
-	fw.it("settles a round unknown, not a false win, when three enemies latch dead and then read alive again before PostRound", function()
-		env.SetState(2) -- StartUp
-		env.SetState(3) -- Engaged
-		env.SetWinner(nil)
-
-		env.Kill("arena1")
-		env.Kill("arena2")
-		env.Kill("arena3")
-		env.Tick(0.5)
-
-		env.Deaths = {}
-		env.Tick(0.5)
-
-		env.SetState(4) -- PostRound
-
-		fw.eq(env.Addon.MatchState.State.roundResults[1], "unknown", "three kills that turned out to be feigns must not settle as a win")
-	end)
 end)
 
-fw.describe("MiniDampen - round settling", function()
+fw.describe("MiniDampen - round edges and the shuffle flag", function()
 	local env
 
 	fw.before_each(function()
@@ -308,81 +294,6 @@ fw.describe("MiniDampen - round settling", function()
 		env.SetState(3) -- Engaged
 	end
 
-	fw.it("records a win when the winner API answers the player's faction, loss for the other", function()
-		startRound()
-		env.SetWinner(0)
-		env.SetState(4) -- PostRound
-
-		fw.eq(env.Addon.MatchState.State.roundResults[1], "win", "own faction wins")
-
-		env.SetState(2)
-		env.SetState(3)
-		env.SetWinner(1)
-		env.SetState(4)
-
-		fw.eq(env.Addon.MatchState.State.roundResults[2], "loss", "other faction loses")
-	end)
-
-	fw.it("falls back to the corpse latch when the winner API answers neither faction", function()
-		startRound()
-		env.SetWinner(nil)
-		env.Kill("arena1")
-		env.Kill("arena2")
-		env.Kill("arena3")
-		env.Tick(0.5)
-		env.SetState(4)
-
-		fw.eq(env.Addon.MatchState.State.roundResults[1], "win", "every enemy latched dead")
-
-		-- Corpses release between rounds, so the mock's death table has to be cleared the same
-		-- way or round two would inherit round one's kills.
-		env.Deaths = {}
-
-		env.SetState(2)
-		env.SetState(3)
-		env.SetWinner(nil)
-		env.Kill("player")
-		env.Kill("party1")
-		env.Kill("party2")
-		env.Tick(0.5)
-		env.SetState(4)
-
-		fw.eq(env.Addon.MatchState.State.roundResults[2], "loss", "every ally latched dead")
-	end)
-
-	fw.it("settles unknown when an enemy clears before dying", function()
-		startRound()
-		env.SetWinner(nil)
-		env.Kill("arena1")
-		env.Kill("arena2")
-		env.Tick(0.5)
-		env.Cleared("arena3")
-		env.SetState(4)
-
-		fw.eq(env.Addon.MatchState.State.roundResults[1], "unknown", "arena3 never latched dead")
-	end)
-
-	fw.it("settles unknown when the winner API disagrees with a conclusive corpse latch", function()
-		startRound()
-		env.SetWinner(1) -- claims the enemy won
-		env.Kill("arena1")
-		env.Kill("arena2")
-		env.Kill("arena3")
-		env.Tick(0.5) -- every enemy latched dead: the corpse latch says the player's side won
-		env.SetState(4)
-
-		fw.eq(env.Addon.MatchState.State.roundResults[1], "unknown", "winner and corpse latch conclusively disagree")
-	end)
-
-	fw.it("never settles a win from a bare nil == nil when both winner and mine are unknown", function()
-		env.MyFaction = nil
-		startRound()
-		env.SetWinner(nil)
-		env.SetState(4)
-
-		fw.neq(env.Addon.MatchState.State.roundResults[1], "win", "mine is nil, winner can't be trusted either way")
-	end)
-
 	fw.it("clears everDead on the next StartUp", function()
 		startRound()
 		env.Kill("arena1")
@@ -391,27 +302,24 @@ fw.describe("MiniDampen - round settling", function()
 		fw.eq(env.Addon.MatchState.State.enemy[1].EverDead, true, "latched dead before the clear")
 
 		env.SetState(4)
-		env.SetState(2)
-		env.SetState(3)
+		env.Deaths = {}
+		startRound()
 
 		fw.eq(env.Addon.MatchState.State.enemy[1].EverDead, false, "round two starts clean")
 	end)
 
-	fw.it("guards SettleRound against recomputing a stored result when a latched-dead enemy reads alive again afterward", function()
-		startRound()
-		env.SetWinner(nil)
+	fw.it("clears everDead on entering Engaged, with no StartUp edge in between", function()
+		env.SetState(3) -- Engaged
 		env.Kill("arena1")
-		env.Kill("arena2")
-		env.Kill("arena3")
-		env.Tick(0.5)
-		env.SetState(4) -- PostRound stores the corpse latch result
-
-		fw.eq(env.Addon.MatchState.State.roundResults[1], "win", "every enemy latched dead")
-
-		env.Deaths.arena1 = nil
 		env.Tick(0.5)
 
-		fw.eq(env.Addon.MatchState.State.roundResults[1], "win", "a later alive reading can't rewrite the stored result")
+		fw.eq(env.Addon.MatchState.State.enemy[1].EverDead, true, "latched dead before the clear")
+
+		env.SetState(4) -- PostRound
+		env.Deaths = {}
+		env.SetState(3) -- Engaged again, straight from PostRound
+
+		fw.eq(env.Addon.MatchState.State.enemy[1].EverDead, false, "the entry edge is what clears, not StartUp alone")
 	end)
 
 	fw.it("calls it a shuffle when the client only answers true after the scope has opened", function()
@@ -484,502 +392,921 @@ fw.describe("MiniDampen - round settling", function()
 		fw.falsy(fresh.Addon.MatchState.State.isSoloShuffle, "cleared with the rest of the scope")
 	end)
 
-	fw.it("leaves roundIndex nil when entering already Engaged with nothing to adopt", function()
-		-- A fresh env for this one: the shared before_each already entered at the default
-		-- Waiting state, and this case is specifically about never having observed StartUp.
+	fw.it("leaves roundIndex nil in a shuffle with nothing readable in the widget set", function()
 		local fresh = Arena.Build()
-		fresh.MatchState = 3 -- Engaged, with no StartUp edge ever seen
+		fresh.SoloShuffle = true
+		fresh.MatchState = 3 -- Engaged
 		fresh.Enter()
 
-		fw.is_nil(fresh.Addon.MatchState.State.roundIndex, "nothing to adopt, no StartUp edge seen")
+		fw.is_nil(fresh.Addon.MatchState.State.roundIndex, "no reading, so no round line")
 	end)
 
-	fw.it("does not error when a round edge follows PVP_MATCH_COMPLETE before scope closes", function()
+	fw.it("does not error when round activity follows PVP_MATCH_COMPLETE before scope closes", function()
+		env.SoloShuffle = true
+		env.SetRecordWidgets(1, 6, 0)
 		startRound()
-		env.SetWinner(0)
-		env.SetState(4) -- PostRound, round one settles
+		env.SetState(4) -- PostRound
 
 		env.Context.Mock.FireEvent("PVP_MATCH_COMPLETE")
 
 		fw.no_error(function()
 			startRound() -- StartUp -> Engaged again, before EvaluateGate has closed scope
-			env.SetWinner(0)
-			env.SetState(4) -- PostRound, settling with db.ActiveMatch already nil
+			env.SetState(4)
 		end, "round activity after PVP_MATCH_COMPLETE, before the scope closes")
 	end)
 end)
 
-fw.describe("MiniDampen - the scoreboard round record", function()
+fw.describe("MiniDampen - the round record from the widgets", function()
 	local env
-
-	---Six rows totalling nine wins, which is three rounds at a team size of three. The player's
-	---own row carries a realm, the way the scoreboard reports it.
-	local function board()
-		return {
-			{ Name = Arena.PLAYER_NAME .. "-TestRealm", Wins = 2 },
-			{ Name = "Allyone", Wins = 2 },
-			{ Name = "Allytwo", Wins = 2 },
-			{ Name = "Foeone", Wins = 1 },
-			{ Name = "Foetwo", Wins = 1 },
-			{ Name = "Foethree", Wins = 1 },
-		}
-	end
+	local state
 
 	fw.before_each(function()
 		env = Arena.Build()
 		env.SoloShuffle = true
 		env.Enter()
-		env.Scores = board()
+		state = env.Addon.MatchState.State
 	end)
 
-	---The server answers the PostRound request with its own event, which is the only thing that
-	---commits a reading.
-	local function reachPostRound()
-		env.SetState(2) -- StartUp
+	fw.it("reads the round, the total, and both halves of the record off one widget update", function()
+		env.SetRecordWidgets(3, 6, 1)
+		env.FireWidgetUpdate()
+
+		fw.eq(state.roundIndex, 3, "the round being played")
+		fw.eq(state.roundTotal, 6, "out of the total the widget names")
+		fw.eq(state.recordWins, 1, "the wins widget's own number")
+		fw.eq(state.recordLosses, 1, "two rounds finished, one of them won")
+	end)
+
+	fw.it("reads on a match state change with no widget event of its own", function()
+		env.SetRecordWidgets(3, 6, 1)
 		env.SetState(3) -- Engaged
-		env.SetState(4) -- PostRound
-		env.FireScoreUpdate()
-	end
 
-	fw.it("reads the player's own wins and the rounds played straight off the scoreboard", function()
-		reachPostRound()
-
-		local state = env.Addon.MatchState.State
-
-		fw.eq(state.scoreWins, 2, "the player's own row, matched past its realm")
-		fw.eq(state.scoreRounds, 3, "nine wins across a team size of three")
+		fw.eq(state.roundIndex, 3, "the state change is a trigger in its own right")
 	end)
 
-	fw.it("asks the server for the score data on entering PostRound", function()
-		fw.falsy(env.ScoreDataRequested, "nothing asked for while the round is still running")
+	fw.it("rejects the hidden widget and the wrong-typed one, which both match the round text shape", function()
+		-- Ids off the observed pair, so a decoy that survived the filter would be a second
+		-- candidate with no tie-break to settle it.
+		env.SetRecordWidgets(3, 6, 1, { RoundId = 3600, WinsId = 4600 })
+		env.FireWidgetUpdate()
 
-		reachPostRound()
-
-		fw.truthy(env.ScoreDataRequested, "the end of the round asks")
+		fw.eq(state.roundIndex, 3, "read off shape alone, with the decoys filtered out")
+		fw.eq(state.recordWins, 1, "and the wins with it")
 	end)
 
-	fw.it("abandons the whole reading when one row is secret", function()
-		env.Scores[4].Secret = true
-		reachPostRound()
+	fw.it("lets the observed id settle a tie between two wins-shaped widgets", function()
+		env.SetRecordWidgets(3, 6, 1, { ExtraWins = 2 })
+		env.FireWidgetUpdate()
 
-		local state = env.Addon.MatchState.State
-
-		fw.is_nil(state.scoreWins, "no wins committed")
-		fw.is_nil(state.scoreRounds, "no round count committed")
-
-		-- The same board with that row readable, so the guard is what refused the reading.
-		env.Scores[4].Secret = nil
-		env.FireScoreUpdate()
-
-		fw.eq(state.scoreRounds, 3, "reads once every row is readable")
+		fw.eq(state.recordWins, 1, "widget 4457 is the one the record was captured on")
 	end)
 
-	fw.it("abandons the whole reading when one row's win count is secret", function()
-		env.Scores[4].Wins = Arena.SECRET
-		reachPostRound()
+	fw.it("refuses two wins-shaped widgets when neither carries the observed id", function()
+		env.SetRecordWidgets(2, 6, 1)
+		env.FireWidgetUpdate()
 
-		local state = env.Addon.MatchState.State
+		fw.eq(state.recordWins, 1, "a clean reading first")
 
-		fw.is_nil(state.scoreWins, "no wins committed")
-		fw.is_nil(state.scoreRounds, "a total missing one row divides into a wrong round count")
+		env.SetRecordWidgets(3, 6, 2, { WinsId = 4600, ExtraWins = 2 })
+		env.FireWidgetUpdate()
 
-		-- The same board with that row readable, so the guard is what refused the reading.
-		env.Scores[4].Wins = 1
-		env.FireScoreUpdate()
-
-		fw.eq(state.scoreRounds, 3, "reads once every win count is readable")
+		fw.eq(state.roundIndex, 2, "the previous round still stands")
+		fw.eq(state.recordWins, 1, "and the record with it")
 	end)
 
-	fw.it("abandons the whole reading when one row carries no stats at all", function()
-		env.Scores[4].NoStats = true
-		reachPostRound()
+	fw.it("never draws a negative loss count when the wins widget has run ahead of the round", function()
+		env.SetRecordWidgets(3, 6, 3)
+		env.FireWidgetUpdate()
 
-		local state = env.Addon.MatchState.State
-
-		fw.is_nil(state.scoreWins, "no wins committed")
-		fw.is_nil(state.scoreRounds, "no round count committed")
-
-		-- The same board with that row carrying stats, so the guard is what refused the reading.
-		env.Scores[4].NoStats = nil
-		env.FireScoreUpdate()
-
-		fw.eq(state.scoreRounds, 3, "reads once every row carries its stats")
+		fw.eq(state.recordWins, 3, "three wins")
+		fw.eq(state.recordLosses, 0, "out of the three rounds they prove were finished")
 	end)
 
-	fw.it("abandons the reading when the player's own row is not on the scoreboard", function()
-		env.Scores[1].Name = "Someoneelse"
-		reachPostRound()
+	fw.it("shows a stale record through the PostRound of a lost round, then corrects", function()
+		env.SetRecordWidgets(3, 6, 1)
+		env.FireWidgetUpdate()
 
-		local state = env.Addon.MatchState.State
+		fw.eq(state.recordLosses, 1, "one loss during round three")
 
-		fw.is_nil(state.scoreWins, "nothing to report as the player's own record")
-		fw.is_nil(state.scoreRounds, "so the round count is abandoned with it")
+		env.SetState(4) -- PostRound, with neither widget having moved
 
-		-- The same board with the player back on it, so the missing row is what refused it.
-		env.Scores[1].Name = Arena.PLAYER_NAME
-		env.FireScoreUpdate()
+		fw.eq(state.recordWins, 1, "the round just lost is not on the record yet")
+		fw.eq(state.recordLosses, 1, "which is a stale number rather than a wrong one")
 
-		fw.eq(state.scoreWins, 2, "reads once the player is on the board")
+		env.SetRecordWidgets(4, 6, 1)
+		env.FireWidgetUpdate()
+
+		fw.eq(state.recordLosses, 2, "and lands once the round number advances")
 	end)
 
-	fw.it("reads nothing while the round is still being played", function()
-		env.SetState(2) -- StartUp
+	fw.it("counts the last round at Complete, which is the round the local counter used to lose", function()
 		env.SetState(3) -- Engaged
+		env.SetRecordWidgets(6, 6, 2)
+		env.FireWidgetUpdate()
+
+		fw.eq(state.recordWins, 2, "two wins during round six")
+		fw.eq(state.recordLosses, 3, "against the five rounds finished so far")
+
+		env.SetBoard(2, 6)
+
+		-- Straight from Engaged to Complete, with no PostRound in between.
+		env.SetState(5)
 		env.FireScoreUpdate()
 
-		local state = env.Addon.MatchState.State
+		fw.eq(state.recordWins, 2, "the wins are unchanged")
+		fw.eq(state.recordLosses, 4, "and the sixth round lands")
+	end)
 
-		fw.is_nil(state.scoreWins, "the scoreboard reads secret mid-round")
-		fw.is_nil(state.scoreRounds, "so nothing is taken from it")
+	fw.it("holds the five-round figure at Complete when no board arrives to book the sixth", function()
+		env.SetState(3) -- Engaged
+		env.SetRecordWidgets(6, 6, 2)
+		env.FireWidgetUpdate()
 
-		env.SetState(4) -- PostRound
-		env.FireScoreUpdate()
+		env.SetState(5)
 
-		fw.eq(state.scoreRounds, 3, "the same board reads once the round is over")
+		fw.eq(state.recordWins, 2, "the wins stand at the five-round figure")
+		fw.eq(state.recordLosses, 3, "the final round is not booked without a board")
+	end)
+
+	fw.it("does not count rounds nobody played when the match is abandoned part way through", function()
+		env.SetRecordWidgets(4, 6, 2)
+		env.FireWidgetUpdate()
+		env.SetState(5) -- Complete at round four
+
+		fw.eq(state.recordWins, 2, "the wins stand")
+		fw.eq(state.recordLosses, 1, "three rounds were played, not six")
+	end)
+
+	fw.it("keeps the record right when a round boundary is missed entirely", function()
+		env.SetRecordWidgets(2, 6, 1)
+		env.FireWidgetUpdate()
+
+		fw.eq(state.recordWins, 1, "one win")
+		fw.eq(state.recordLosses, 0, "off the one round finished")
+
+		-- Nothing fired for round three, so the next reading arrives two rounds on.
+		env.SetRecordWidgets(4, 6, 2)
+		env.FireWidgetUpdate()
+
+		fw.eq(state.recordWins, 2, "the wins the widget names")
+		fw.eq(state.recordLosses, 1, "and three rounds finished, whatever was seen in between")
+	end)
+
+	fw.it("refuses a reading whose numbers cannot be right", function()
+		local cases = {
+			{ 7, 6, 1, "a round past the total" },
+			{ 0, 6, 0, "a round before the first" },
+			{ 7, 7, 1, "a total past the six a shuffle has" },
+			{ 3, 6, 7, "more wins than the match has rounds" },
+		}
+
+		for _, case in ipairs(cases) do
+			env.SetRecordWidgets(case[1], case[2], case[3])
+			env.FireWidgetUpdate()
+
+			fw.is_nil(state.roundIndex, case[4])
+		end
+	end)
+
+	fw.it("refuses a widget carrying no digits at all", function()
+		env.SetRecordWidgets(3, 6, 1, { RoundText = "Sudden Death" })
+		env.FireWidgetUpdate()
+
+		fw.is_nil(state.roundIndex, "nothing that reads as a round number")
+	end)
+
+	fw.it("does not take a timer-flagged single-integer widget as the wins widget", function()
+		env.SetRecordWidgets(3, 6, 1, { Timer = true })
+		env.FireWidgetUpdate()
+
+		fw.is_nil(state.roundIndex, "a clock is not a wins count, and round three has no other candidate")
+	end)
+
+	fw.it("refuses wins that outrun the round itself, not just the total", function()
+		env.SetRecordWidgets(1, 6, 5, { WinsText = "Dampening 5%" })
+		env.FireWidgetUpdate()
+
+		fw.is_nil(state.roundIndex, "five wins before round one has finished cannot be real")
+	end)
+
+	fw.it("refuses without erroring wherever the client answers secret", function()
+		local fields = { "SecretSetId", "SecretWidgetList", "SecretInfo", "SecretText", "SecretState", "SecretTimer" }
+
+		for _, field in ipairs(fields) do
+			local options = {}
+			options[field] = true
+
+			fw.no_error(function()
+				env.SetRecordWidgets(3, 6, 1, options)
+				env.FireWidgetUpdate()
+			end, field .. " is never read through")
+
+			fw.is_nil(state.roundIndex, field .. " commits nothing")
+		end
+	end)
+
+	fw.it("refuses a reading that would take the record backwards", function()
+		env.SetRecordWidgets(4, 6, 2)
+		env.FireWidgetUpdate()
+
+		fw.eq(state.recordWins, 2, "two wins out of three finished rounds")
+		fw.eq(state.recordLosses, 1, "so one loss")
+
+		env.SetRecordWidgets(4, 6, 1)
+		env.FireWidgetUpdate()
+
+		fw.eq(state.recordWins, 2, "a wins count that dropped is a widget caught mid-update")
+
+		env.SetRecordWidgets(2, 6, 2)
+		env.FireWidgetUpdate()
+
+		fw.eq(state.roundIndex, 4, "and so is a round count that dropped")
+	end)
+
+	fw.it("holds the last accepted record once the widgets stop reading", function()
+		env.SetRecordWidgets(3, 6, 1)
+		env.FireWidgetUpdate()
+
+		env.Widgets = {}
+		env.FireWidgetUpdate()
+
+		fw.eq(state.roundIndex, 3, "the round still stands")
+		fw.eq(state.recordWins, 1, "and the record with it")
+
+		env.RemoveWidgetApi()
+
+		fw.no_error(function()
+			env.FireWidgetUpdate()
+		end, "a client with no widget system at all")
+
+		fw.eq(state.recordLosses, 1, "nothing but leaving clears the record")
 	end)
 
 	fw.it("reads nothing in a plain arena, which has no rounds to record", function()
 		env.SoloShuffle = false
-		reachPostRound()
+		env.SetRecordWidgets(3, 6, 1)
+		env.FireWidgetUpdate()
 
-		local state = env.Addon.MatchState.State
-
-		fw.is_nil(state.scoreWins, "no wins committed")
-		fw.is_nil(state.scoreRounds, "no round count committed")
+		fw.is_nil(state.roundIndex, "a non-shuffle top-center set is never parsed")
 
 		env.SoloShuffle = true
-		env.FireScoreUpdate()
+		env.FireWidgetUpdate()
 
-		fw.eq(state.scoreRounds, 3, "the same board reads in a shuffle")
+		fw.eq(state.roundIndex, 3, "the same widgets read in a shuffle")
 	end)
 
-	fw.it("refuses a reading that would take the round count backwards", function()
-		reachPostRound()
+	fw.it("redraws only when the record actually moved", function()
+		env.SetRecordWidgets(3, 6, 1)
+		env.FireWidgetUpdate()
 
-		local state = env.Addon.MatchState.State
+		local notifies = 0
+		local previous = env.Addon.MatchState.OnChanged
 
-		fw.eq(state.scoreRounds, 3, "three rounds read")
-
-		env.Scores = {
-			{ Name = Arena.PLAYER_NAME, Wins = 1 },
-			{ Name = "Allyone", Wins = 1 },
-			{ Name = "Allytwo", Wins = 1 },
-			{ Name = "Foeone", Wins = 1 },
-			{ Name = "Foetwo", Wins = 1 },
-			{ Name = "Foethree", Wins = 1 },
-		}
-		-- A whole round on, so the reading is asked for again and only the count refuses it.
-		reachPostRound()
-
-		fw.eq(state.scoreRounds, 3, "the stale two-round answer was refused")
-		fw.eq(state.scoreWins, 2, "and the wins that came with the higher reading survive")
-	end)
-
-	fw.it("keeps the round number when a refused board is answered after the next round starts", function()
-		local state = env.Addon.MatchState.State
-
-		-- Round one, won.
-		env.Scores = {
-			{ Name = Arena.PLAYER_NAME, Wins = 1 },
-			{ Name = "Allyone", Wins = 1 },
-			{ Name = "Allytwo", Wins = 1 },
-			{ Name = "Foeone", Wins = 0 },
-			{ Name = "Foetwo", Wins = 0 },
-			{ Name = "Foethree", Wins = 0 },
-		}
-		reachPostRound()
-
-		fw.eq(state.scoreRounds, 1, "one round read")
-
-		-- Round two ends and the server answers with round one's board, which is refused.
-		reachPostRound()
-
-		fw.eq(state.roundIndex, 2, "the round that just ended")
-
-		-- Round three is under way before the board counting round two finally lands.
-		env.SetState(2) -- StartUp
-		env.SetState(3) -- Engaged
-		env.Scores = {
-			{ Name = Arena.PLAYER_NAME, Wins = 1 },
-			{ Name = "Allyone", Wins = 1 },
-			{ Name = "Allytwo", Wins = 1 },
-			{ Name = "Foeone", Wins = 1 },
-			{ Name = "Foetwo", Wins = 1 },
-			{ Name = "Foethree", Wins = 1 },
-		}
-		env.FireScoreUpdate()
-
-		fw.eq(state.scoreRounds, 2, "the late board is still worth reading")
-		fw.eq(state.roundIndex, 3, "but the round being played is not dragged back to it")
-	end)
-
-	fw.it("refuses the board from before the round that asked, and still reads the one that follows", function()
-		local state = env.Addon.MatchState.State
-
-		-- Round one, won.
-		env.Scores = {
-			{ Name = Arena.PLAYER_NAME, Wins = 1 },
-			{ Name = "Allyone", Wins = 1 },
-			{ Name = "Allytwo", Wins = 1 },
-			{ Name = "Foeone", Wins = 0 },
-			{ Name = "Foetwo", Wins = 0 },
-			{ Name = "Foethree", Wins = 0 },
-		}
-		reachPostRound()
-
-		fw.eq(state.scoreWins, 1, "the round one win")
-		fw.eq(state.scoreRounds, 1, "off a board totalling one round")
-
-		-- Round two ends, and the server answers the request with round one's board again.
-		reachPostRound()
-
-		fw.eq(state.roundIndex, 2, "the round that just ended, not the one the stale board counts")
-
-		-- The board the server really has, arriving once round two is credited.
-		env.Scores = {
-			{ Name = Arena.PLAYER_NAME, Wins = 1 },
-			{ Name = "Allyone", Wins = 1 },
-			{ Name = "Allytwo", Wins = 1 },
-			{ Name = "Foeone", Wins = 1 },
-			{ Name = "Foetwo", Wins = 1 },
-			{ Name = "Foethree", Wins = 1 },
-		}
-		env.FireScoreUpdate()
-
-		fw.eq(state.scoreRounds, 2, "the request stayed open for the board that counts round two")
-		fw.eq(state.scoreWins, 1, "so the round the player lost draws as a loss")
-	end)
-
-	fw.it("adopts the round index from the scoreboard when no round edge was ever seen", function()
-		local fresh = Arena.Build()
-		fresh.SoloShuffle = true
-		-- Entering already Engaged, so nothing ever counted a StartUp edge.
-		fresh.MatchState = 3
-		fresh.Enter()
-
-		fw.is_nil(fresh.Addon.MatchState.State.roundIndex, "no edge to count rounds from")
-
-		fresh.Scores = board()
-		fresh.SetState(4) -- PostRound
-		fresh.FireScoreUpdate()
-
-		fw.eq(fresh.Addon.MatchState.State.roundIndex, 3, "the scoreboard's own round count")
-		fw.eq(_G.MiniDampenDB.ActiveMatch.RoundIndex, 3, "written through the way a settled round is")
-	end)
-
-	fw.it("refuses a board this scope never asked for", function()
-		-- The client hands back whatever it was last sent, which for the first round of a match
-		-- is the previous match's finished board.
-		env.FireScoreUpdate()
-
-		local state = env.Addon.MatchState.State
-
-		fw.is_nil(state.scoreWins, "a board that predates the request commits nothing")
-		fw.is_nil(state.scoreRounds, "so a finished match cannot seed the next one")
-		fw.is_nil(state.roundIndex, "and the round index is left for a real reading")
-
-		reachPostRound()
-
-		fw.eq(state.scoreRounds, 3, "the same board reads once it was asked for")
-	end)
-
-	fw.it("divides by the size a shuffle always is, not the roster counted so far", function()
-		env.SetState(2)
-		env.SetState(3)
-		env.SetState(4)
-		-- A roster still filling in reads low, and dividing by it would multiply the round count.
-		env.Addon.MatchState.State.teamSize = 1
-		env.FireScoreUpdate()
-
-		local state = env.Addon.MatchState.State
-
-		fw.eq(state.scoreRounds, 3, "nine wins is three rounds however many players are known")
-		fw.eq(state.roundIndex, 3, "so the round index cannot run past the match")
-	end)
-
-	fw.it("refuses a board that totals no rounds at all", function()
-		for _, row in ipairs(env.Scores) do
-			row.Wins = 0
+		env.Addon.MatchState.OnChanged = function()
+			notifies = notifies + 1
+			previous()
 		end
 
-		reachPostRound()
+		env.FireWidgetUpdate()
 
-		local state = env.Addon.MatchState.State
+		fw.eq(notifies, 0, "an unrelated widget update draws nothing")
 
-		fw.is_nil(state.scoreRounds, "an empty board is a stale one, not a finished round")
-		fw.eq(state.roundIndex, 1, "the counted round edge stands rather than being zeroed")
+		env.SetRecordWidgets(4, 6, 2)
+		env.FireWidgetUpdate()
+
+		fw.eq(notifies, 1, "a moved record draws once")
 	end)
 
-	fw.it("refuses a board giving the player more wins than there were rounds", function()
-		env.Scores = {
-			{ Name = Arena.PLAYER_NAME, Wins = 4 },
-			{ Name = "Allyone", Wins = 0 },
-			{ Name = "Allytwo", Wins = 0 },
-			{ Name = "Foeone", Wins = 1 },
-			{ Name = "Foetwo", Wins = 1 },
-			{ Name = "Foethree", Wins = 0 },
-		}
+	fw.it("redraws when a widget event is what flips the shuffle flag, even though the record itself declines to read", function()
+		env.SetRecordWidgets(3, 6, 1)
+		env.FireWidgetUpdate()
 
-		reachPostRound()
+		local notifies = 0
+		local previous = env.Addon.MatchState.OnChanged
 
-		local state = env.Addon.MatchState.State
+		env.Addon.MatchState.OnChanged = function()
+			notifies = notifies + 1
+			previous()
+		end
 
-		fw.is_nil(state.scoreWins, "six wins over three slots is two rounds, so four wins is wrong")
-		fw.is_nil(state.scoreRounds, "and the round count goes with it")
+		env.SoloShuffle = false
+		env.FireWidgetUpdate()
+
+		fw.eq(notifies, 1, "the flag moving off is itself a reason to redraw, so the record row leaves with it")
 	end)
 
-	fw.it("never reports more rounds than a shuffle has", function()
-		env.Scores = {
-			{ Name = Arena.PLAYER_NAME, Wins = 6 },
-			{ Name = "Allyone", Wins = 6 },
-			{ Name = "Allytwo", Wins = 6 },
-			{ Name = "Foeone", Wins = 3 },
-			{ Name = "Foetwo", Wins = 3 },
-			{ Name = "Foethree", Wins = 3 },
-		}
+	fw.it("re-reads the record from the client after a reload", function()
+		env.SetRecordWidgets(4, 6, 2)
+		env.FireWidgetUpdate()
 
-		reachPostRound()
+		env.Reload()
 
-		fw.eq(env.Addon.MatchState.State.scoreRounds, 6, "twenty-seven wins still caps at six rounds")
+		local reloaded = env.Addon.MatchState.State
+
+		fw.eq(reloaded.roundIndex, 4, "read back off the widgets rather than out of saved variables")
+		fw.eq(reloaded.recordWins, 2, "with the wins")
+		fw.eq(reloaded.recordLosses, 1, "and the losses")
 	end)
 
-	fw.it("abandons the reading when two rows answer to the player's name", function()
-		env.Scores[4].Name = Arena.PLAYER_NAME .. "-OtherRealm"
+	fw.it("clears the round record 1.0.3 left in saved variables", function()
+		_G.MiniDampenDB.ActiveMatch = { RoundIndex = 3 }
 
-		reachPostRound()
+		env.Reload()
 
-		local state = env.Addon.MatchState.State
+		fw.is_nil(_G.MiniDampenDB.ActiveMatch, "nothing persists now, so nothing is left behind")
+	end)
 
-		fw.is_nil(state.scoreWins, "no way to tell which row is the player's own")
-		fw.is_nil(state.scoreRounds, "so the whole reading is abandoned")
-
-		-- The same board with the opponent renamed, so the clash is what refused it.
-		env.Scores[4].Name = "Foeone"
+	fw.it("keeps the finished record over the results screen and clears it on leaving", function()
+		env.SetRecordWidgets(6, 6, 2)
+		env.FireWidgetUpdate()
+		env.SetBoard(2, 6)
+		env.SetState(5) -- Complete
 		env.FireScoreUpdate()
 
-		fw.eq(state.scoreWins, 2, "reads once only one row carries the name")
+		fw.eq(state.recordLosses, 4, "the final record")
+
+		env.Context.Mock.FireEvent("PVP_MATCH_COMPLETE")
+		env.Widgets = {}
+		env.FireWidgetUpdate()
+
+		fw.eq(state.recordWins, 2, "held once the widget set is torn down")
+		fw.eq(state.recordLosses, 4, "both halves of it")
+
+		env.Leave()
+
+		fw.is_nil(state.roundIndex, "the round goes with the scope")
+		fw.is_nil(state.roundTotal, "and the total")
+		fw.is_nil(state.recordWins, "and the wins")
+		fw.is_nil(state.recordLosses, "and the losses")
 	end)
 end)
 
-fw.describe("MiniDampen - the reload key", function()
+fw.describe("MiniDampen - the final round from the scoreboard", function()
+	local env
+	local state
+
+	fw.before_each(function()
+		env = Arena.Build()
+		env.SoloShuffle = true
+		env.Enter()
+		state = env.Addon.MatchState.State
+	end)
+
+	---Drives the widgets to round six of six, the round the wins widget never itself takes,
+	---leaving Complete as the only step still needed to reach the board branch.
+	local function reachFinalRound(wins)
+		env.SetState(3) -- Engaged
+		env.SetRecordWidgets(6, 6, wins)
+		env.FireWidgetUpdate()
+	end
+
+	fw.it("books a won final round from the board, which the widgets alone would lose", function()
+		reachFinalRound(4)
+		env.SetBoard(5, 6)
+
+		env.SetState(5) -- Complete
+		env.FireScoreUpdate()
+
+		fw.eq(state.recordWins, 5, "the board's own count of the final round")
+		fw.eq(state.recordLosses, 1, "five rounds out of six")
+	end)
+
+	fw.it("books a lost final round from the board when it agrees with the widget", function()
+		reachFinalRound(4)
+		env.SetBoard(4, 6)
+
+		env.SetState(5) -- Complete
+		env.FireScoreUpdate()
+
+		fw.eq(state.recordWins, 4, "the board agrees with the widget's own floor")
+		fw.eq(state.recordLosses, 2, "the final round was lost")
+	end)
+
+	fw.it("refuses a board that has not been reported by an UPDATE_BATTLEFIELD_SCORE this scope", function()
+		reachFinalRound(4)
+		env.SetBoard(5, 6)
+
+		env.SetState(5) -- Complete, the board sits on the client but nothing has reported it
+
+		fw.eq(state.recordWins, 4, "the direct read is refused")
+		fw.eq(state.recordLosses, 1, "held")
+	end)
+
+	fw.it("takes the same board once UPDATE_BATTLEFIELD_SCORE has arrived", function()
+		reachFinalRound(4)
+		env.SetBoard(5, 6)
+		env.SetState(5) -- Complete
+
+		env.FireScoreUpdate()
+
+		fw.eq(state.recordWins, 5, "the board the event brought")
+		fw.eq(state.recordLosses, 1, "the final round lands")
+	end)
+
+	fw.it("books the final round from the board when the widgets tear down before Complete", function()
+		reachFinalRound(4)
+
+		fw.eq(state.recordWins, 4, "settled from the widgets while still Engaged")
+		fw.eq(state.recordLosses, 1, "five rounds played")
+
+		env.Widgets = {}
+		env.SetBoard(5, 6)
+		env.SetState(5) -- Complete, with the widgets already gone
+		env.FireScoreUpdate()
+
+		fw.eq(state.recordWins, 5, "the board's own count of the final round")
+		fw.eq(state.recordLosses, 1, "five rounds out of six")
+		fw.eq(env.ScoreRequests, 1, "asked exactly once")
+	end)
+
+	fw.it("holds at the five-round figure when no board ever arrives", function()
+		reachFinalRound(4)
+
+		env.SetState(5) -- Complete
+
+		fw.eq(state.recordWins, 4, "the widget's own floor")
+		fw.eq(state.recordLosses, 1, "five rounds counted, not six")
+		fw.eq(state.roundIndex, 6, "the round line still reads the true round")
+		fw.eq(state.roundTotal, 6, "out of six")
+	end)
+
+	fw.it("holds without erroring on a secret row and a row with no stats table", function()
+		reachFinalRound(4)
+		env.SetBoard(5, 6, { Secret = true })
+
+		fw.no_error(function()
+			env.SetState(5) -- Complete
+		end, "a secret own row")
+
+		fw.eq(state.recordWins, 4, "held at the widget's floor")
+		fw.eq(state.recordLosses, 1, "five rounds")
+
+		env.SetBoard(5, 6, { NoStats = true })
+
+		fw.no_error(function()
+			env.FireScoreUpdate()
+		end, "a row with no stats table")
+
+		fw.eq(state.recordWins, 4, "still held")
+		fw.eq(state.recordLosses, 1, "still five rounds")
+	end)
+
+	fw.it("settles a board that arrives late over one still crediting the round in progress", function()
+		reachFinalRound(4)
+		env.SetBoard(4, 5) -- fifteen across five rounds, the sixth not yet credited
+
+		env.SetState(5) -- Complete
+
+		fw.eq(state.recordWins, 4, "held while the board still sums to five rounds")
+		fw.eq(state.recordLosses, 1, "five rounds, not six")
+
+		env.SetBoard(5, 6) -- the full eighteen
+		env.FireScoreUpdate()
+
+		fw.eq(state.recordWins, 5, "settles once the board catches up")
+		fw.eq(state.recordLosses, 1, "the final round lands")
+		fw.eq(env.ScoreRequests, 1, "never asked a second time for it")
+	end)
+
+	fw.it("refuses a board whose own wins undercut the widget's floor", function()
+		-- The monotonic guard would refuse this board as backwards once a round has already
+		-- committed, so this starts from a reload with nothing committed yet.
+		env.MatchState = 5 -- Complete, as if reloaded straight to the results screen
+		env.Reload()
+
+		state = env.Addon.MatchState.State
+
+		env.SetRecordWidgets(6, 6, 4)
+		env.SetBoard(3, 6)
+		env.FireScoreUpdate()
+
+		fw.is_nil(state.recordWins, "the floor alone refuses it, with nothing committed to fall back on")
+		fw.is_nil(state.recordLosses, "held")
+	end)
+
+	fw.it("refuses a board whose own wins outrun the six rounds played", function()
+		reachFinalRound(4)
+		env.SetBoard(7, 6)
+
+		env.SetState(5) -- Complete
+
+		fw.eq(state.recordWins, 4, "seven wins out of six rounds cannot be real")
+		fw.eq(state.recordLosses, 1, "held")
+	end)
+
+	fw.it("refuses a board carrying two rows under the player's own name", function()
+		reachFinalRound(4)
+		-- Carries the same wins as the real row, so every other check clears and ownRows is
+		-- the only one left to refuse it.
+		env.SetBoard(5, 6, { Duplicate = 5 })
+
+		env.SetState(5) -- Complete
+		env.FireScoreUpdate()
+
+		fw.eq(state.recordWins, 4, "ambiguous between two own rows, so held")
+		fw.eq(state.recordLosses, 1, "held")
+	end)
+
+	fw.it("holds without erroring when the scoreboard api is absent entirely", function()
+		reachFinalRound(4)
+		env.RemoveScoreApi()
+
+		fw.no_error(function()
+			env.SetState(5) -- Complete
+		end, "no GetNumBattlefieldScores or GetScoreInfo")
+
+		fw.eq(state.recordWins, 4, "held")
+		fw.eq(state.recordLosses, 1, "held")
+	end)
+
+	fw.it("asks the server exactly once, however many widget and score events arrive with a refusing board", function()
+		reachFinalRound(4)
+		env.SetState(5) -- Complete, no board ever set, so every reading refuses
+
+		for _ = 1, 10 do
+			env.FireWidgetUpdate()
+		end
+
+		for _ = 1, 10 do
+			env.FireScoreUpdate()
+		end
+
+		fw.eq(env.ScoreRequests, 1, "one request for the whole match")
+	end)
+
+	fw.it("never asks before Complete, at any round", function()
+		env.SetRecordWidgets(3, 6, 1)
+		env.FireWidgetUpdate()
+		env.SetState(3) -- Engaged
+
+		fw.eq(env.ScoreRequests, 0, "mid-match reads never touch the board")
+	end)
+
+	fw.it("never asks when the match completes below its last round", function()
+		env.SetRecordWidgets(4, 6, 2)
+		env.FireWidgetUpdate()
+		env.SetState(5) -- Complete at round four
+
+		fw.eq(env.ScoreRequests, 0, "an abandoned match never asks for the board")
+	end)
+
+	fw.it("settles from the direct board read on a client with no request call at all", function()
+		reachFinalRound(4)
+		env.SetBoard(5, 6)
+		env.RemoveScoreRequestApi()
+
+		fw.no_error(function()
+			env.SetState(5) -- Complete
+			env.FireScoreUpdate()
+		end, "no RequestBattlefieldScoreData on this client")
+
+		fw.eq(state.recordWins, 5, "the direct read still settles it")
+		fw.eq(state.recordLosses, 1, "the final round lands")
+	end)
+
+	fw.it("makes its own single request and settles its own board in a second match", function()
+		reachFinalRound(4)
+		env.SetBoard(5, 6)
+		env.SetState(5) -- Complete
+		env.FireScoreUpdate()
+
+		fw.eq(env.ScoreRequests, 1, "the first match's request")
+
+		env.Leave()
+		env.MatchState = 1 -- Waiting, a fresh match's prep room
+		env.Widgets = {}
+		env.Scores = {}
+		env.Enter()
+
+		state = env.Addon.MatchState.State
+
+		fw.is_nil(state.roundIndex, "a fresh match starts with no record")
+
+		reachFinalRound(3)
+		env.SetBoard(4, 6)
+		env.SetState(5) -- Complete
+		env.FireScoreUpdate()
+
+		fw.eq(state.recordWins, 4, "the second match's own board")
+		fw.eq(state.recordLosses, 2, "settled independently of the first")
+		fw.eq(env.ScoreRequests, 2, "one request per match")
+	end)
+
+	fw.it("once settled, a stale widget reading changes nothing", function()
+		reachFinalRound(4)
+		env.SetBoard(5, 6)
+		env.SetState(5) -- Complete
+		env.FireScoreUpdate()
+
+		fw.eq(state.recordWins, 5, "settled")
+
+		env.SetRecordWidgets(6, 6, 4)
+		env.FireWidgetUpdate()
+
+		fw.eq(state.recordWins, 5, "the stale widget reading changes nothing")
+		fw.eq(state.recordLosses, 1, "nor this")
+	end)
+
+	fw.it("once settled, a further score update changes nothing", function()
+		reachFinalRound(4)
+		env.SetBoard(5, 6)
+		env.SetState(5) -- Complete
+		env.FireScoreUpdate() -- settles the record at 5W-1L
+
+		-- Without recordSettled, this board clears every check BoardWins runs, including the
+		-- monotonic guard, and would silently move the record to 6W-0L.
+		env.SetBoard(6, 6)
+		env.FireScoreUpdate()
+
+		fw.eq(state.recordWins, 5, "the settled record does not move again")
+		fw.eq(state.recordLosses, 1, "held")
+	end)
+
+	fw.it("the settled record survives PVP_MATCH_COMPLETE and the widget set tearing down, and clears on leaving", function()
+		reachFinalRound(4)
+		env.SetBoard(5, 6)
+		env.SetState(5) -- Complete
+		env.FireScoreUpdate()
+
+		env.Context.Mock.FireEvent("PVP_MATCH_COMPLETE")
+		env.Widgets = {}
+		env.FireWidgetUpdate()
+
+		fw.eq(state.recordWins, 5, "still settled")
+		fw.eq(state.recordLosses, 1, "both halves")
+
+		env.Leave()
+
+		fw.is_nil(state.recordWins, "cleared with the rest of the scope")
+		fw.is_nil(state.recordLosses, "and the losses")
+	end)
+
+	fw.it("re-reads the widgets and the board on a reload at the results screen", function()
+		reachFinalRound(4)
+		env.SetBoard(5, 6)
+		env.SetState(5) -- Complete
+		env.FireScoreUpdate()
+
+		env.Reload()
+		env.FireScoreUpdate()
+
+		local reloaded = env.Addon.MatchState.State
+
+		fw.eq(reloaded.recordWins, 5, "read back off the widgets and the board")
+		fw.eq(reloaded.recordLosses, 1, "with nothing persisted")
+	end)
+
+	fw.it("counts the widgets alone when the match is abandoned part way through, and never asks for the board", function()
+		env.SetRecordWidgets(4, 6, 2)
+		env.FireWidgetUpdate()
+		env.SetBoard(9, 6) -- a full board present but never consulted
+		env.SetState(5) -- Complete at round four
+
+		fw.eq(state.recordWins, 2, "the widgets alone")
+		fw.eq(state.recordLosses, 1, "three rounds played")
+		fw.eq(env.ScoreRequests, 0, "the board is never asked for")
+	end)
+
+	fw.it("holds the five-round figure when the match is abandoned during the final round", function()
+		reachFinalRound(2)
+		env.SetBoard(2, 5) -- fifteen across five rounds, the sixth never credited
+
+		env.SetState(5) -- Complete
+
+		fw.eq(state.recordWins, 2, "the five-round figure")
+		fw.eq(state.recordLosses, 3, "the abandoned final round is not counted")
+	end)
+end)
+
+fw.describe("MiniDampen - the match log", function()
 	local env
 
 	fw.before_each(function()
 		env = Arena.Build()
+		_G.MiniDampenDB.Logging = true
+		env.SoloShuffle = true
+		env.Enter()
 	end)
 
-	-- Reload() re-runs every Lua file, and MatchState:Init() re-evaluates the gate as its last
-	-- step, so a reload while env.InArena is still true reopens scope and adopts on its own,
-	-- the way a real /reload does. None of these need a fresh Enter() afterward.
-	fw.it("round-trips a reload: two rounds settle, then roundIndex and roundResults survive", function()
-		env.Enter()
-		env.SetState(2)
-		env.SetState(3)
-		env.SetWinner(0)
-		env.SetState(4)
-		env.SetState(2)
-		env.SetState(3)
-		env.SetWinner(0)
-		env.SetState(4)
+	local function Mark()
+		return #env.Context.Mock.State.Prints
+	end
 
-		env.Reload()
+	local function LinesSince(mark)
+		local prints = env.Context.Mock.State.Prints
+		local lines = {}
 
-		fw.eq(env.Addon.MatchState.State.roundIndex, 2, "round index survived")
-		fw.eq(env.Addon.MatchState.State.roundResults[1], "win", "round one survived")
-		fw.eq(env.Addon.MatchState.State.roundResults[2], "win", "round two survived")
+		for i = mark + 1, #prints do
+			lines[#lines + 1] = prints[i]
+		end
+
+		return lines
+	end
+
+	local function FindLine(lines, needle)
+		for _, line in ipairs(lines) do
+			if line:find(needle, 1, true) then
+				return line
+			end
+		end
+	end
+
+	local function CountLines(lines, needle)
+		local count = 0
+
+		for _, line in ipairs(lines) do
+			if line:find(needle, 1, true) then
+				count = count + 1
+			end
+		end
+
+		return count
+	end
+
+	fw.it("names the accepted reading and the widgets it came out of", function()
+		local mark = Mark()
+
+		env.SetRecordWidgets(3, 6, 1)
+		env.FireWidgetUpdate()
+
+		local line = FindLine(LinesSince(mark), "record round=3/6")
+
+		fw.not_nil(line, "the reading is in the capture")
+		fw.truthy(line:find("wins=1 completed=2", 1, true) ~= nil, "with the rounds it derived")
+		fw.truthy(line:find("roundId=3521 winsId=4457", 1, true) ~= nil, "and the two widgets it read")
+		fw.truthy(line:find("source=widgets", 1, true) ~= nil, "no board involved before the final round")
 	end)
 
-	-- GetActiveMatchDuration is a time_t, so the pre-reload and post-reload computations of
-	-- time() - duration can land a second or two apart even for the same match. MatchStartEpoch
-	-- stands in directly for that computed instant, since duration is derived from it and a
-	-- shift in one shifts the other by exactly as much.
-	fw.it("still adopts when the computed start instant moved on by two seconds, inside MATCH_KEY_TOLERANCE", function()
-		env.Enter()
-		env.SetState(2)
-		env.SetState(3)
-		env.SetWinner(0)
-		env.SetState(4)
+	fw.it("names the board as the record's source once it settles the final round", function()
+		env.SetRecordWidgets(6, 6, 4)
+		env.FireWidgetUpdate()
+		env.SetBoard(5, 6)
 
-		env.MatchStartEpoch = env.MatchStartEpoch + 2
-		env.Reload()
+		local mark = Mark()
 
-		fw.eq(env.Addon.MatchState.State.roundIndex, 1, "adopted despite the two second drift")
+		env.SetState(5) -- Complete
+		env.FireScoreUpdate()
+
+		local line = FindLine(LinesSince(mark), "record round=6/6")
+
+		fw.not_nil(line, "the settling reading is in the capture")
+		fw.truthy(line:find("source=board widgetWins=4", 1, true) ~= nil, "names the board and the floor it moved from")
 	end)
 
-	fw.it("round index survives a reload mid-round-3, before that round settles", function()
-		env.Enter()
-		env.SetState(2) -- StartUp, round one
+	fw.it("logs 'board does not add up' once, however many events repeat it", function()
+		env.SetRecordWidgets(6, 6, 4)
+		env.FireWidgetUpdate()
+		env.SetBoard(2, 5) -- fifteen across five rounds, six were played
+
+		local mark = Mark()
+
+		env.SetState(5) -- Complete, the first refusal
+
+		for _ = 1, 10 do
+			env.FireWidgetUpdate()
+		end
+
+		fw.eq(CountLines(LinesSince(mark), "record refused board does not add up"), 1, "one line for a reason that holds across every retry")
+	end)
+
+	fw.it("says nothing further once the board has settled the record", function()
+		env.SetRecordWidgets(6, 6, 4)
+		env.FireWidgetUpdate()
+		env.SetBoard(5, 6)
+		env.SetState(5) -- Complete
+		env.FireScoreUpdate() -- settles the record
+
+		local mark = Mark()
+
+		env.SetRecordWidgets(6, 6, 4)
+		env.FireWidgetUpdate()
+		env.FireScoreUpdate()
+
+		fw.eq(#LinesSince(mark), 0, "a settled record has nothing left to say")
+	end)
+
+	fw.it("names the refusal and the text it saw", function()
+		local mark = Mark()
+
+		env.SetRecordWidgets(3, 6, 1, { NoWins = true })
+		env.FireWidgetUpdate()
+
+		local line = FindLine(LinesSince(mark), "record refused no wins widget")
+
+		fw.not_nil(line, "the reason the reading was turned down")
+		fw.truthy(line:find("3521=Round: 3/6", 1, true) ~= nil, "with the live text it did find")
+	end)
+
+	fw.it("names a secret timer flag as its own refusal, and commits nothing", function()
+		local mark = Mark()
+
+		env.SetRecordWidgets(3, 6, 1, { SecretTimer = true })
+		env.FireWidgetUpdate()
+
+		fw.not_nil(FindLine(LinesSince(mark), "record refused secret timer flag"), "the secret hasTimer read is never taken through")
+		fw.is_nil(env.Addon.MatchState.State.roundIndex, "the whole reading is refused, not narrowed")
+	end)
+
+	fw.it("logs one refusal rather than one per widget update", function()
+		env.SetRecordWidgets(3, 6, 1, { NoWins = true })
+
+		local mark = Mark()
+
+		env.FireWidgetUpdate()
+		env.FireWidgetUpdate()
+		env.FireWidgetUpdate()
+
+		fw.eq(CountLines(LinesSince(mark), "record refused"), 1, "a reason that holds all round is said once")
+	end)
+
+	fw.it("says nothing more once the record stops moving", function()
+		env.SetRecordWidgets(3, 6, 1)
+		env.FireWidgetUpdate()
+
+		local mark = Mark()
+
+		env.FireWidgetUpdate()
+		env.FireWidgetUpdate()
+
+		fw.eq(#LinesSince(mark), 0, "an unchanged reading is not worth a line")
+	end)
+
+	fw.it("stamps every line with the clock", function()
+		local mark = Mark()
+
+		env.Tick(1.25)
+		env.SetRecordWidgets(3, 6, 1)
+		env.FireWidgetUpdate()
+
+		local line = FindLine(LinesSince(mark), "record round=3/6")
+
+		fw.truthy(line:find("[10001.25]", 1, true) ~= nil, "the clock the reading was taken at")
+	end)
+
+	fw.it("logs every state transition with the round it happened on", function()
+		env.SetRecordWidgets(3, 6, 1)
+
+		local mark = Mark()
+
 		env.SetState(3) -- Engaged
-		env.SetWinner(0)
-		env.SetState(4) -- PostRound, round one settles
-		env.SetState(2) -- StartUp, round two
-		env.SetState(3) -- Engaged
-		env.SetWinner(0)
-		env.SetState(4) -- PostRound, round two settles
-		env.SetState(2) -- StartUp, round three
-		env.SetState(3) -- Engaged, round three is current and has not settled
 
-		env.Reload()
-
-		fw.eq(env.Addon.MatchState.State.roundIndex, 3, "round index is written on increment, not only at settle")
-		fw.eq(env.Addon.MatchState.State.roundResults[1], "win", "round one survived")
-		fw.eq(env.Addon.MatchState.State.roundResults[2], "win", "round two survived")
-		fw.is_nil(env.Addon.MatchState.State.roundResults[3], "round three has not settled yet")
+		fw.not_nil(FindLine(LinesSince(mark), "state 1 -> 3 round=3 shuffle=true"), "the move and the round it moved on")
 	end)
 
-	fw.it("discards the saved record when the instance id differs beyond tolerance", function()
-		env.Enter()
-		env.SetState(2)
-		env.SetState(3)
-		env.SetWinner(0)
-		env.SetState(4)
+	fw.it("says the widget system was missing rather than going quiet", function()
+		env.RemoveWidgetApi()
 
-		env.InstanceId = env.InstanceId + 1
-		env.Reload()
+		local mark = Mark()
 
-		fw.is_nil(env.Addon.MatchState.State.roundIndex, "a different instance id is a different match")
+		fw.no_error(function()
+			env.FireWidgetUpdate()
+		end, "a widget event on a client with nothing to read")
+
+		fw.not_nil(FindLine(LinesSince(mark), "record refused no widget api"), "the capture names what it went looking for")
 	end)
 
-	fw.it("discards the saved record when the bracket differs beyond tolerance", function()
-		env.Enter()
-		env.SetState(2)
-		env.SetState(3)
-		env.SetWinner(0)
-		env.SetState(4)
-
-		env.Bracket = env.Bracket + 1
-		env.Reload()
-
-		fw.is_nil(env.Addon.MatchState.State.roundIndex, "a different bracket is a different match")
-	end)
-
-	fw.it("discards the saved record when StartedAt differs beyond tolerance", function()
-		env.Enter()
-		env.SetState(2)
-		env.SetState(3)
-		env.SetWinner(0)
-		env.SetState(4)
-
-		env.MatchStartEpoch = env.MatchStartEpoch + 30
-		env.Reload()
-
-		fw.is_nil(env.Addon.MatchState.State.roundIndex, "a match starting 30 seconds later is a different match")
-	end)
-
-	fw.it("clears db.ActiveMatch on leaving, so a later login outside an arena finds nothing", function()
-		env.Enter()
-		env.SetState(2)
-		env.SetState(3)
-		env.SetWinner(0)
-		env.SetState(4)
+	fw.it("marks the scope opening and closing", function()
+		local mark = Mark()
 
 		env.Leave()
 
-		fw.is_nil(_G.MiniDampenDB.ActiveMatch, "cleared on leaving")
+		fw.truthy(FindLine(LinesSince(mark), "scope close") ~= nil, "where the match ended")
 
-		env.Reload()
+		mark = Mark()
+		env.Enter()
 
-		fw.is_nil(_G.MiniDampenDB.ActiveMatch, "still nothing to adopt outside an arena")
+		fw.truthy(FindLine(LinesSince(mark), "scope open") ~= nil, "and where the next one began")
+	end)
+
+	fw.it("prints nothing at all once logging is off", function()
+		_G.MiniDampenDB.Logging = false
+
+		local mark = Mark()
+
+		env.SetRecordWidgets(3, 6, 1)
+		env.FireWidgetUpdate()
+		env.SetState(5)
+		env.Context.Mock.FireEvent("PVP_MATCH_COMPLETE")
+		env.Leave()
+
+		fw.eq(#LinesSince(mark), 0, "a whole match runs quiet once the capture is done with")
+	end)
+
+	fw.it("reads the record and moves the state on even when the notify path throws", function()
+		env.Addon.Framework.NotifyWithPrefix = function()
+			error("the chat frame refused the line")
+		end
+
+		fw.no_error(function()
+			env.SetRecordWidgets(3, 6, 1)
+			env.FireWidgetUpdate()
+			env.SetState(3)
+		end, "a reading and a round edge with every log line throwing")
+
+		local state = env.Addon.MatchState.State
+
+		fw.eq(state.roundIndex, 3, "the reading still landed")
+		fw.eq(state.recordWins, 1, "with the record it carried")
 	end)
 end)
 
@@ -1404,24 +1731,69 @@ fw.describe("MiniDampen - Debug()", function()
 		fw.truthy(line:find("rawSecret=false", 1, true) ~= nil, "readable, not secret")
 	end)
 
-	fw.it("reports both gates the round record hangs on, so a missing rounds row is diagnosable", function()
+	fw.it("reports every gate and every field the round record hangs on", function()
 		env.SoloShuffle = true
 		env.Enter()
-		env.SetState(2)
-		env.SetState(3)
-		env.SetWinner(0)
-		env.SetState(4)
+		env.SetRecordWidgets(3, 6, 1)
+		env.FireWidgetUpdate()
 
 		local line = FindLine(env.Addon.MatchState:Debug(), "isSoloShuffle=")
 
 		fw.not_nil(line, "Debug() carries the round record gates")
 		fw.truthy(line:find("isSoloShuffle=true", 1, true) ~= nil, "the flag the display reads")
 		fw.truthy(line:find("rawIsSoloShuffle=true", 1, true) ~= nil, "and what the client itself answers")
-		fw.truthy(line:find("roundIndex=1", 1, true) ~= nil, "the other gate")
-		fw.truthy(line:find("results=win,", 1, true) ~= nil, "and the record so far")
+		fw.truthy(line:find("roundIndex=3", 1, true) ~= nil, "the other gate")
+		fw.truthy(line:find("roundTotal=6", 1, true) ~= nil, "the round line's denominator")
+		fw.truthy(line:find("recordWins=1", 1, true) ~= nil, "the record so far")
+		fw.truthy(line:find("recordLosses=1", 1, true) ~= nil, "both halves of it")
 	end)
 
-	fw.it("reports the scoreboard reading on that same line, so a preferred record is diagnosable", function()
+	fw.it("names settled and asked, so a record frozen mid-match can be reported without logging", function()
+		env.SoloShuffle = true
+		env.Enter()
+		env.SetState(3) -- Engaged
+		env.SetRecordWidgets(6, 6, 4)
+		env.FireWidgetUpdate()
+		env.SetBoard(5, 6)
+
+		local before = FindLine(env.Addon.MatchState:Debug(), "isSoloShuffle=")
+
+		fw.truthy(before:find("settled=false", 1, true) ~= nil, "not yet settled before Complete")
+		fw.truthy(before:find("asked=false", 1, true) ~= nil, "and nothing asked yet")
+
+		env.SetState(5) -- Complete
+		env.FireScoreUpdate() -- settles the record
+
+		local after = FindLine(env.Addon.MatchState:Debug(), "isSoloShuffle=")
+
+		fw.truthy(after:find("settled=true", 1, true) ~= nil, "settled once the board is accepted")
+		fw.truthy(after:find("asked=true", 1, true) ~= nil, "and the one request made")
+	end)
+
+	fw.it("reports the widget reading and the text it was taken from", function()
+		env.SoloShuffle = true
+		env.Enter()
+		env.SetRecordWidgets(3, 6, 1)
+
+		local line = FindLine(env.Addon.MatchState:Debug(), "record round=")
+
+		fw.truthy(line:find("record round=3/6 wins=1", 1, true) ~= nil, "the reading itself")
+		fw.truthy(line:find("roundId=3521 winsId=4457", 1, true) ~= nil, "the widgets it came out of")
+		fw.truthy(line:find("3521=Round: 3/6", 1, true) ~= nil, "and every live widget's own text")
+	end)
+
+	fw.it("names why the widgets could not be read", function()
+		env.SoloShuffle = true
+		env.Enter()
+		env.SetRecordWidgets(3, 6, 1, { NoWins = true })
+
+		local line = FindLine(env.Addon.MatchState:Debug(), "record refused=")
+
+		fw.truthy(line:find("refused=no wins widget", 1, true) ~= nil, "the reason the reading was turned down")
+		fw.truthy(line:find("3521=Round: 3/6", 1, true) ~= nil, "with the text it did find")
+	end)
+
+	fw.it("reports the board row by row, with the player's own stats and the client's columns", function()
 		env.SoloShuffle = true
 		env.Enter()
 		env.Scores = {
@@ -1432,15 +1804,59 @@ fw.describe("MiniDampen - Debug()", function()
 			{ Name = "Foetwo", Wins = 1 },
 			{ Name = "Foethree", Wins = 1 },
 		}
-		env.SetState(2)
-		env.SetState(3)
-		env.SetState(4)
-		env.FireScoreUpdate()
+		_G.C_PvP.GetMatchPVPStatColumns = function()
+			return { { name = "Rounds Won" } }
+		end
 
-		local line = FindLine(env.Addon.MatchState:Debug(), "isSoloShuffle=")
+		local lines = env.Addon.MatchState:Debug()
+		local totals = FindLine(lines, "score total=")
 
-		fw.truthy(line:find("scoreWins=2", 1, true) ~= nil, "the player's own wins off the scoreboard")
-		fw.truthy(line:find("scoreRounds=3", 1, true) ~= nil, "and the rounds they came out of")
+		fw.truthy(totals:find("total=9", 1, true) ~= nil, "the whole board's wins")
+		fw.truthy(totals:find("rounds=3", 1, true) ~= nil, "and the rounds they divide into")
+		fw.truthy(totals:find("ownWins=2", 1, true) ~= nil, "the player's own wins off that same read")
+		fw.truthy(totals:find("ownRows=1", 1, true) ~= nil, "matched to exactly one row")
+
+		local own = FindLine(lines, "score row 1")
+		local foe = FindLine(lines, "score row 4")
+
+		fw.truthy(own:find("name=Tester", 1, true) ~= nil, "the row's own name")
+		fw.truthy(own:find("wins=2", 1, true) ~= nil, "and the value the record is read from")
+		fw.truthy(foe:find("wins=1", 1, true) ~= nil, "every row, not only the player's")
+
+		fw.truthy(
+			FindLine(lines, "score ownStat 1"):find("value=2", 1, true) ~= nil,
+			"the player's own stat entries, so the wins column can be checked by id"
+		)
+		fw.truthy(
+			FindLine(lines, "score column 1"):find("name=Rounds Won", 1, true) ~= nil,
+			"and whatever the client names its columns"
+		)
+	end)
+
+	fw.it("survives an empty board, a client with no scoreboard API, and a secret row", function()
+		fw.no_error(function()
+			env.Addon.MatchState:Debug()
+		end, "out of an arena, with no board ever read")
+
+		env.Enter()
+		env.Scores = { { Name = Arena.PLAYER_NAME, Secret = true } }
+
+		fw.no_error(function()
+			env.Addon.MatchState:Debug()
+		end, "a secret row is never read through")
+
+		env.RemoveScoreApi()
+
+		local lines
+
+		fw.no_error(function()
+			lines = env.Addon.MatchState:Debug()
+		end, "a client with no scoreboard to read")
+
+		fw.truthy(
+			FindLine(lines, "score total="):find("refused=no score api", 1, true) ~= nil,
+			"and says which API it went looking for"
+		)
 	end)
 
 	fw.it("routes every Debug() field through SafeString, so a secret value is never interpolated raw", function()
@@ -1490,6 +1906,76 @@ fw.describe("MiniDampen - Probe()", function()
 		end
 	end
 
+	local function CountLines(lines, needle)
+		local count = 0
+
+		for _, line in ipairs(lines) do
+			if line:find(needle, 1, true) then
+				count = count + 1
+			end
+		end
+
+		return count
+	end
+
+	fw.it("enumerates every set the client names, not only the top-center one", function()
+		env.WidgetSetId = 7
+		env.Widgets = { { widgetID = 42, widgetType = 0 } }
+		env.AddWidgetSetGetter("GetBelowMinimapWidgetSetID", 3)
+		env.WidgetsBySet[3] = { { widgetID = 99, widgetType = 0 } }
+
+		local lines = env.Addon.MatchState:Probe()
+
+		fw.not_nil(FindLine(lines, "widgetSet GetTopCenterWidgetSetID=7"), "the top-center set")
+		fw.not_nil(FindLine(lines, "widget GetTopCenterWidgetSetID id=42"), "and its widgets")
+		fw.not_nil(FindLine(lines, "widgetSet GetBelowMinimapWidgetSetID=3"), "the set a second getter names")
+		fw.not_nil(FindLine(lines, "widget GetBelowMinimapWidgetSetID id=99"), "and its widgets, labelled with it")
+	end)
+
+	fw.it("takes every set a single getter names", function()
+		env.AddWidgetSetGetter("GetPowerBarWidgetSetID", 3, 5)
+		env.WidgetsBySet[3] = { { widgetID = 99, widgetType = 0 } }
+		env.WidgetsBySet[5] = { { widgetID = 101, widgetType = 0 } }
+
+		local lines = env.Addon.MatchState:Probe()
+
+		fw.not_nil(FindLine(lines, "widget GetPowerBarWidgetSetID id=99"), "the first set it named")
+		fw.not_nil(FindLine(lines, "widget GetPowerBarWidgetSetID id=101"), "and the second")
+	end)
+
+	fw.it("reports a getter that refuses and a set id it cannot read, then carries on", function()
+		env.WidgetSetId = 7
+		env.Widgets = { { widgetID = 42, widgetType = 0 } }
+		-- Both sort ahead of GetTopCenterWidgetSetID, so the top-center set is only reached by
+		-- carrying on past them.
+		env.AddFailingWidgetSetGetter("GetAbsentWidgetSetID")
+		env.AddWidgetSetGetter("GetSecretWidgetSetID", Arena.SECRET)
+
+		local lines
+
+		fw.no_error(function()
+			lines = env.Addon.MatchState:Probe()
+		end, "a getter that throws")
+
+		local failure = FindLine(lines, "widgetSet GetAbsentWidgetSetID failed:")
+
+		fw.not_nil(failure, "the refusal is named")
+		fw.truthy(failure:find("no widget set for", 1, true) ~= nil, "carrying the underlying error text")
+		fw.not_nil(FindLine(lines, "widgetSet GetSecretWidgetSetID=secret"), "a set id that never read is named too")
+		fw.not_nil(FindLine(lines, "widget GetTopCenterWidgetSetID id=42"), "and the rest of the dump still ran")
+	end)
+
+	fw.it("enumerates a set two getters both name only once", function()
+		env.WidgetSetId = 7
+		env.Widgets = { { widgetID = 42, widgetType = 0 } }
+		env.AddWidgetSetGetter("GetBelowMinimapWidgetSetID", 7)
+
+		local lines = env.Addon.MatchState:Probe()
+
+		fw.not_nil(FindLine(lines, "widgetSet GetBelowMinimapWidgetSetID=7"), "both getters are reported")
+		fw.eq(CountLines(lines, "id=42"), 1, "the set behind them is walked once")
+	end)
+
 	fw.it("keeps the commentator and widget sections when the aura section throws in an active match", function()
 		env.Enter()
 		env.CommentatorDampening = 30
@@ -1500,7 +1986,7 @@ fw.describe("MiniDampen - Probe()", function()
 		local lines = env.Addon.MatchState:Probe()
 
 		fw.truthy(FindLine(lines, "C_Commentator.GetDampeningPercent=30") ~= nil, "commentator section still ran")
-		fw.truthy(FindLine(lines, "topCenterWidgetSet=7") ~= nil, "widget section still ran")
+		fw.truthy(FindLine(lines, "widgetSet GetTopCenterWidgetSetID=7") ~= nil, "widget section still ran")
 
 		local failure = FindLine(lines, "aura HELPFUL failed")
 
@@ -1521,7 +2007,7 @@ fw.describe("MiniDampen - Probe()", function()
 		local lines = env.Addon.MatchState:Probe()
 
 		local commentatorIndex = FindIndex(lines, "C_Commentator.GetDampeningPercent=30")
-		local widgetIndex = FindIndex(lines, "topCenterWidgetSet=7")
+		local widgetIndex = FindIndex(lines, "widgetSet GetTopCenterWidgetSetID=7")
 		local auraIndex = FindIndex(lines, "aura HELPFUL")
 
 		fw.truthy(commentatorIndex < widgetIndex, "commentator runs before the widget section")

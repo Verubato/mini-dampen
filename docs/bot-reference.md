@@ -21,9 +21,9 @@ draws a single string, centred as a unit.
 
 ## How it works
 
-- Runs only in an arena: `IsInInstance` reports `"arena"` and the active match state is
-  neither `Inactive` nor `Complete`. Leaving the arena unregisters every event and cancels
-  the poll ticker. A small bootstrap frame stays permanently registered for
+- Runs only in an arena: `IsInInstance` reports `"arena"` and the active match state is not
+  `Inactive`, so the display stays up over the results screen. Leaving the arena unregisters
+  every event and cancels the poll ticker. A small bootstrap frame stays permanently registered for
   `PLAYER_ENTERING_WORLD`, `ZONE_CHANGED_NEW_AREA`, and `PVP_MATCH_STATE_CHANGED`, everywhere
   including the open world, a battleground, or a raid, purely to re-check whether to open the
   gate; nothing else about the addon runs outside an arena.
@@ -31,24 +31,25 @@ draws a single string, centred as a unit.
   `arena1`, `arena2`, `arena3`) and the dampening aura (spell 110310). An opponent counts as
   hidden, not dead, 1.5 seconds after an `ARENA_OPPONENT_UPDATE` "unseen" for it, unless a
   "seen" arrives first; the alive count itself only ever moves on an actual death.
-- Solo shuffle round record: the win-loss record comes off the server's own scoreboard where
-  it can be read. Entering `PostRound` asks for the score data, and the answering
-  `UPDATE_BATTLEFIELD_SCORE` supplies every player's wins; the whole board's wins divide by
-  three for the rounds played, and the player's own row gives the wins. A board is only read
-  once this arena has asked for one, so the client's cache of a previous match cannot be
-  mistaken for this one. Any row that reads secret, any row missing its stats, a name matching
-  two rows, or, once a round has been counted, a count behind either the round that asked or
-  the last reading taken abandons the whole reading and leaves the previous one standing. A
-  refused reading leaves the request open, so the board the server sends once the round is
-  credited is still read. A reading never lowers the round number, since the round being played
-  files its result under it.
-- Where no scoreboard reading has landed, the record falls back to counting rounds locally: the
-  round number starts at 1 the first time a round moves from `StartUp` to `Engaged` after
-  entering, increments on every later `StartUp` -> `Engaged` edge, and caps at 6. A round's
-  result comes from `C_PvP.GetActiveMatchWinner` where that answers a real faction and agrees
-  with the corpse latch; otherwise it falls back to whichever side had every member die at some
-  point in the round, which reads as unknown when a departing opponent leaves that undecidable.
-  The record survives a `/reload` as long as the same match is still running.
+- Solo shuffle round record: the record comes off the two top-center UI widgets the client
+  already draws, one carrying `Round: X/Y` and one carrying `Wins: N`. Read on
+  `UPDATE_UI_WIDGET`, `PVP_MATCH_STATE_CHANGED`, and `PVP_MATCH_COMPLETE`, and only while the
+  client calls the match a solo shuffle. Widgets are matched on the shape of their text rather
+  than their id, since ids move between patches, and only widgets Blizzard is actually showing
+  are considered. Where two widgets share a shape, the ids the pair was captured under decide;
+  where they cannot, the whole reading is refused and the last accepted record stays on screen.
+- Every round but the last comes off the widgets: rounds finished is the higher of `round - 1`
+  and the wins count, so a win credited before the round number moves is never counted twice and
+  the loss count is never negative. The wins widget never takes the final round, since a match
+  that completes has no post-round window for it to update in, so that round is booked from the
+  server's own scoreboard instead. The board is asked for once, at the first `Complete` reading,
+  and read whatever arrives, either right away or once `UPDATE_BATTLEFIELD_SCORE` brings it; it is
+  never asked for twice. A board that will not read, or whose whole total does not add up to the
+  rounds the widgets say were played, leaves the final round unbooked, and the record holds at the
+  five-round figure rather than guessing at the split. A match somebody left part way through never
+  reaches the board at all; it counts only the rounds that were actually played.
+- Nothing about the record is saved between sessions. After a `/reload` it is read back off the
+  widgets, the same way it was read the first time.
 - Dims Blizzard's own top-center arena widgets while in scope, restoring exactly the alpha
   it found beforehand rather than always setting 1.
 - `Enabled = false` keeps the whole feature dormant, including while already in an arena.
@@ -80,6 +81,10 @@ draws a single string, centred as a unit.
   the right tool.
 - `/minidampen probe`: prints the raw client data behind those values, in or out of an
   arena.
+- `/minidampen log on`, `/minidampen log off`: turns the match log on or off, off by default.
+  With it on, every accepted or refused record reading and every match state change is printed
+  to chat as it happens, which is the field capture to ask a user for. `/minidampen log` alone
+  reports where the setting stands.
 
 ### Display
 
@@ -128,8 +133,8 @@ confirmation prompt.
 | Nothing shows in an arena | Check "Enabled". Click Test briefly to confirm the rows exist and draw with sample data. |
 | Dampening row is missing entirely | The dampening aura was unreadable this session (absent, secret, or not a number); the row hides rather than showing a blank or a zero. |
 | Enemy alive count seems to skip an opponent | Either it has been continuously out of sight for 1.5 seconds, drawn hidden without changing the count, or it disconnected or left and Blizzard cleared its visibility override, drawn the same way but this time subtracted from the count and marked with `?` since it can no longer be confirmed alive. A departed ally is handled the same way. |
-| Round record shows a trailing `?` | No scoreboard reading has landed, and at least one locally settled round could not be determined (usually an opponent left before dying), so the total is unknown rather than wrong. |
-| Round record is missing in a solo shuffle | The client has not called the match a shuffle yet. `/minidampen debug` shows `isSoloShuffle` and `rawIsSoloShuffle`; the flag is re-read on every gated event, so it recovers on its own once the client answers. |
+| Round record is missing in a solo shuffle | Either the client has not called the match a shuffle yet, or the two widgets could not be read. `/minidampen debug` shows `isSoloShuffle`, `rawIsSoloShuffle`, and a `record` line naming the reading or the reason it was refused, with the text of every live widget it saw. Both recover on their own once the client answers. |
+| Record is stuck one round short at the results screen | The board refused to book the final round, most often because it had not yet been credited when it was read. `/minidampen debug` shows `settled` and `asked` on the `isSoloShuffle=` line: `asked=true settled=false` means the request went out but nothing usable came back, and the record holds at the five-round figure rather than guessing at the split. |
 | Cannot move the display | Test mode is off. Click Test in the settings panel first. |
 | Blizzard's own arena widgets are gone | Expected while "Hide Blizzard" is on and you are in scope; they return to whatever alpha MiniDampen found them at on leaving, so they can come back dimmed if another addon had already dimmed them. |
 | Need to see the raw values behind any of the above | `/minidampen debug` prints them all to chat, including mid-fight where `/dump` itself is refused. See Slash commands above. |

@@ -20,6 +20,11 @@ M.SECRET = setmetatable({}, {
 -- match the player.
 M.PLAYER_NAME = "Tester"
 
+-- The ids the two record widgets were captured under in a live shuffle, which is what the
+-- addon's own tie-break keys on.
+M.ROUND_WIDGET_ID = 3521
+M.WINS_WIDGET_ID = 4457
+
 ---A LibStub stand-in carrying only LibSharedMedia-3.0, backed by env.Media so a test can
 ---register a font the way another addon's media pack would, without vendoring the real library.
 ---@param env table
@@ -78,6 +83,20 @@ local function LibStubMock(env)
 	return stub
 end
 
+---Installs one of the client's other widget set getters, reading its answer at call time so a
+---test can change what it names after it exists.
+local function InstallWidgetSetGetter(env, name)
+	_G.C_UIWidgetManager[name] = function()
+		local answer = env.WidgetSetGetters[name]
+
+		if answer == "error" then
+			error("no widget set for " .. name)
+		end
+
+		return unpack(answer, 1, answer.n)
+	end
+end
+
 ---(Re)installs every override this addon's WoW API surface needs onto the mocked globals.
 ---Called once after the initial load and again after every simulated Reload, because
 ---WowMock.Install() replaces _G.C_PvP, _G.C_UnitAuras, _G.Enum and friends with fresh tables.
@@ -100,6 +119,16 @@ local function InstallOverrides(env)
 		IconAndText = 0,
 		CaptureBar = 1,
 		StatusBar = 2,
+		TextWithState = 8,
+	}
+
+	-- Real values, so the record read's visibility gate compares against the same numbers
+	-- Blizzard's own IconAndText template does.
+	_G.Enum.IconAndTextWidgetState = {
+		Hidden = 0,
+		Shown = 1,
+		ShownWithDynamicIconFlashing = 2,
+		ShownWithDynamicIconNotFlashing = 3,
 	}
 
 	_G.LibStub = LibStubMock(env)
@@ -118,20 +147,12 @@ local function InstallOverrides(env)
 		return env.InArena, env.InArena and "arena" or "none"
 	end
 
-	_G.GetInstanceInfo = function()
-		return "Test Arena", env.InArena and "arena" or "none", 0, "", 0, 0, false, env.InstanceId, 0, 0
-	end
-
 	_G.GetNumArenaOpponentSpecs = function()
 		return env.Specs
 	end
 
 	_G.GetNumArenaOpponents = function()
 		return env.Opponents
-	end
-
-	_G.GetBattlefieldArenaFaction = function()
-		return env.MyFaction
 	end
 
 	_G.UnitExists = function(unit)
@@ -194,13 +215,27 @@ local function InstallOverrides(env)
 		GetTopCenterWidgetSetID = function()
 			return env.WidgetSetId
 		end,
-		GetAllWidgetsBySetID = function()
-			return env.Widgets
+		GetAllWidgetsBySetID = function(setId)
+			if env.SecretWidgetList then
+				return M.SECRET
+			end
+
+			return env.WidgetsBySet[setId] or env.Widgets
 		end,
-		GetIconAndTextWidgetVisualizationInfo = function()
+		GetIconAndTextWidgetVisualizationInfo = function(widgetId)
+			local info = env.WidgetInfoById[widgetId]
+
+			if info ~= nil then
+				return info
+			end
+
 			return env.WidgetInfo
 		end,
 	}
+
+	for name in pairs(env.WidgetSetGetters) do
+		InstallWidgetSetGetter(env, name)
+	end
 
 	_G.C_Commentator = {
 		GetDampeningPercent = function()
@@ -232,20 +267,12 @@ local function InstallOverrides(env)
 		return env.MatchState
 	end
 
-	_G.C_PvP.GetActiveMatchWinner = function()
-		return env.Winner
-	end
-
 	_G.C_PvP.GetActiveMatchBracket = function()
 		return env.Bracket
 	end
 
 	_G.GetNumBattlefieldScores = function()
 		return #env.Scores
-	end
-
-	_G.RequestBattlefieldScoreData = function()
-		env.ScoreDataRequested = true
 	end
 
 	-- The stat carrying round wins sits at index 1, under an id that differs between matches,
@@ -268,10 +295,8 @@ local function InstallOverrides(env)
 		return { name = row.Name, stats = { { pvpStatValue = row.Wins } } }
 	end
 
-	-- Derived from the clock rather than a field of its own, so advancing time during a
-	-- simulated reload keeps duration and time() moving together the way a real match does.
-	_G.C_PvP.GetActiveMatchDuration = function()
-		return env.Epoch - env.MatchStartEpoch
+	_G.RequestBattlefieldScoreData = function()
+		env.ScoreRequests = env.ScoreRequests + 1
 	end
 
 	local realNewTicker = _G.C_Timer.NewTicker
@@ -302,7 +327,6 @@ function M.Build(options)
 		Addon = context.Addon,
 		Time = 10000,
 		Epoch = 1700000000,
-		MatchStartEpoch = 1700000000,
 		InArena = false,
 		MatchState = 1, -- Waiting, so a bare Enter() opens scope without implying StartUp
 		-- Independently controllable, the way the two real APIs can disagree: specs is an early
@@ -310,14 +334,13 @@ function M.Build(options)
 		Specs = 3,
 		Opponents = 3,
 		SoloShuffle = false,
-		MyFaction = 0,
-		Winner = nil,
 		Bracket = 1,
 		-- One row per player, each { Name = "...", Wins = 2 }, in the order GetScoreInfo hands
 		-- them out.
 		Scores = {},
-		ScoreDataRequested = false,
-		InstanceId = 1,
+		-- Counts every RequestBattlefieldScoreData call, so a test can prove the match asked
+		-- the server for its board exactly once.
+		ScoreRequests = 0,
 		NextAuraSlot = 0,
 		AuraSlotsRefuses = false,
 		Deaths = {},
@@ -327,6 +350,15 @@ function M.Build(options)
 		Auras = {},
 		WidgetSetId = 0,
 		Widgets = {},
+		-- Set id -> its own widget list, for a test with more than one set in play. A set with
+		-- no entry falls back to env.Widgets.
+		WidgetsBySet = {},
+		-- Getter name -> the ids it names, or the string "error" for one that refuses.
+		WidgetSetGetters = {},
+		-- Widget id -> its own visualization info. A widget with no entry falls back to
+		-- env.WidgetInfo.
+		WidgetInfoById = {},
+		SecretWidgetList = false,
 		WidgetInfo = nil,
 		CommentatorDampening = nil,
 		CommentatorRefuses = false,
@@ -360,7 +392,6 @@ function M.Build(options)
 	-- test can enter already Engaged without a StartUp edge ever having been observed.
 	function env.Enter()
 		env.InArena = true
-		env.MatchStartEpoch = env.Epoch
 		context.Mock.FireEvent("PLAYER_ENTERING_WORLD", true, false)
 	end
 
@@ -409,6 +440,126 @@ function M.Build(options)
 		auras.BySlot[slot] = aura
 	end
 
+	---Adds one of the client's other set getters, so discovery by name has more than the
+	---top-center one to find. Names every id passed, and none at all when passed none.
+	function env.AddWidgetSetGetter(name, ...)
+		env.WidgetSetGetters[name] = { n = select("#", ...), ... }
+		InstallWidgetSetGetter(env, name)
+	end
+
+	---Adds a set getter that refuses, the way one gated on something this client has no
+	---business asking about would.
+	function env.AddFailingWidgetSetGetter(name)
+		env.WidgetSetGetters[name] = "error"
+		InstallWidgetSetGetter(env, name)
+	end
+
+	---Stands in for a client with no widget system at all, which the dump has to survive rather
+	---than error on.
+	function env.RemoveWidgetApi()
+		_G.C_UIWidgetManager = nil
+	end
+
+	---Publishes the top-center set the way a live shuffle carries it: the round and wins widgets
+	---plus two decoys whose text matches but whose type or state does not.
+	---@param widgets table? RoundId, WinsId, RoundText, WinsText, ExtraWins, NoRound, NoWins,
+	---SecretSetId, SecretWidgetList, SecretInfo, SecretText, SecretState, SecretTimer, or Timer
+	---for a wins-shaped clock
+	function env.SetRecordWidgets(round, total, wins, widgets)
+		widgets = widgets or {}
+
+		local iconAndText = _G.Enum.UIWidgetVisualizationType.IconAndText
+		local shown = _G.Enum.IconAndTextWidgetState.Shown
+
+		env.WidgetSetId = widgets.SecretSetId and M.SECRET or 7
+		env.SecretWidgetList = widgets.SecretWidgetList == true
+		env.Widgets = {}
+		env.WidgetInfoById = {}
+
+		local function publish(widgetId, widgetType, info)
+			env.Widgets[#env.Widgets + 1] = { widgetID = widgetId, widgetType = widgetType }
+			env.WidgetInfoById[widgetId] = info
+		end
+
+		if not widgets.NoRound then
+			publish(widgets.RoundId or M.ROUND_WIDGET_ID, iconAndText, {
+				state = widgets.SecretState and M.SECRET or shown,
+				text = widgets.SecretText and M.SECRET
+					or widgets.RoundText
+					or string.format("Round: %d/%d", round, total),
+			})
+		end
+
+		if not widgets.NoWins then
+			publish(
+				widgets.WinsId or M.WINS_WIDGET_ID,
+				iconAndText,
+				widgets.SecretInfo and M.SECRET or {
+					state = shown,
+					text = widgets.WinsText or string.format("Wins: %d", wins),
+					hasTimer = widgets.SecretTimer and M.SECRET or (widgets.Timer == true),
+				}
+			)
+		end
+
+		-- The second single-integer widget a non-shuffle arena was seen carrying, which is the
+		-- whole reason the tie-break exists.
+		if widgets.ExtraWins then
+			publish(916, iconAndText, {
+				state = shown,
+				text = string.format("Gold Team: %d Players Remaining", widgets.ExtraWins),
+			})
+		end
+
+		publish(6064, iconAndText, { state = _G.Enum.IconAndTextWidgetState.Hidden, text = "Round: 1/6" })
+		publish(6065, _G.Enum.UIWidgetVisualizationType.TextWithState, { state = shown, text = "0/6 Players Ready" })
+	end
+
+	---Stands in for the client reporting that a widget's own numbers moved.
+	function env.FireWidgetUpdate()
+		context.Mock.FireEvent("UPDATE_UI_WIDGET")
+	end
+
+	---Publishes a six-row scoreboard the way SummariseScoreboard reads it: the player's own row
+	---carrying ownWins, the other five sharing what is left of rounds * 3.
+	---@param board table? Secret marks the player's own row unreadable, NoStats leaves it with
+	---no stats table, Duplicate (a number) adds a second row under the player's own name carrying
+	---that many wins, drawn out of the other rows' share so the total is unchanged, Total overrides
+	---the board's whole sum instead of deriving it from rounds
+	function env.SetBoard(ownWins, rounds, board)
+		board = board or {}
+
+		local duplicateWins = board.Duplicate and (type(board.Duplicate) == "number" and board.Duplicate or 0) or 0
+		local total = board.Total or (rounds * 3)
+		local remainder = total - ownWins - duplicateWins
+		local others = 5
+		local share = math.floor(remainder / others)
+		local extra = remainder - share * others
+
+		env.Scores = { { Name = M.PLAYER_NAME, Wins = ownWins } }
+
+		if board.Secret then
+			env.Scores[1].Secret = true
+		end
+
+		if board.NoStats then
+			env.Scores[1].NoStats = true
+		end
+
+		for i = 1, others do
+			env.Scores[#env.Scores + 1] = { Name = "Other" .. i, Wins = share + (i == 1 and extra or 0) }
+		end
+
+		if board.Duplicate then
+			env.Scores[#env.Scores + 1] = { Name = M.PLAYER_NAME, Wins = duplicateWins }
+		end
+	end
+
+	---Stands in for the server volunteering the board it was asked for.
+	function env.FireScoreUpdate()
+		context.Mock.FireEvent("UPDATE_BATTLEFIELD_SCORE")
+	end
+
 	---Marks a token's next death read as secret rather than a real boolean.
 	function env.MarkDeathSecret(token)
 		env.SecretDeaths[token] = true
@@ -430,15 +581,6 @@ function M.Build(options)
 		context.Mock.FireEvent("ARENA_OPPONENT_UPDATE", token, "destroyed")
 	end
 
-	function env.SetWinner(faction)
-		env.Winner = faction
-	end
-
-	---Stands in for the server answering a score data request.
-	function env.FireScoreUpdate()
-		context.Mock.FireEvent("UPDATE_BATTLEFIELD_SCORE")
-	end
-
 	---Controls the live dampening reading, which comes from C_Commentator.GetDampeningPercent.
 	function env.SetDampening(value)
 		env.CommentatorDampening = value
@@ -448,6 +590,19 @@ function M.Build(options)
 	---ReadDampening's guard checks C_Commentator's own type first.
 	function env.RemoveCommentatorApi()
 		_G.C_Commentator = nil
+	end
+
+	---Stands in for a client with no scoreboard to read, which is what the debug dump has to
+	---survive rather than error on.
+	function env.RemoveScoreApi()
+		_G.GetNumBattlefieldScores = nil
+		_G.C_PvP.GetScoreInfo = nil
+	end
+
+	---Stands in for a client with no request call at all, which RequestBoardOnce has to survive
+	---by settling from the direct board read instead.
+	function env.RemoveScoreRequestApi()
+		_G.RequestBattlefieldScoreData = nil
 	end
 
 	---Simulates a /reload: fresh Lua state, saved variables preserved, everything else the

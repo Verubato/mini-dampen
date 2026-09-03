@@ -12,7 +12,7 @@ local MAX_ROUNDS = 6
 -- Widest text each row can produce, measured but never drawn, so the block width never jitters
 -- as the live value's character count changes tick to tick.
 local WIDEST_COUNTS_VALUE = "3? vs 3?"
-local WIDEST_ROUNDS_VALUE = "6W - 6L?"
+local WIDEST_ROUNDS_VALUE = "6W - 6L"
 local WIDEST_ROUND_LINE = "Round 6/6"
 local DAMPENING_LABEL = "Dampening"
 -- Reserves room for the label, a three digit percent, and a forced value's brackets.
@@ -34,17 +34,15 @@ local SAMPLE_STATE = {
 	},
 	-- The round line draws in both halves of the alternation, so it needs a number here.
 	roundIndex = 4,
-	roundResults = {},
+	roundTotal = 6,
 }
 -- Part way through, so the record reads as a real scoreline rather than a fresh 0W - 0L.
 local SAMPLE_SHUFFLE_STATE = {
 	isSoloShuffle = true,
 	roundIndex = 4,
-	roundResults = { "win", "loss", "win" },
-	-- The same record again off the scoreboard, so the preview exercises the path a live match
-	-- draws from.
-	scoreWins = 2,
-	scoreRounds = 3,
+	roundTotal = 6,
+	recordWins = 2,
+	recordLosses = 1,
 }
 -- One full swap between the two samples and back.
 local SAMPLE_PERIOD = 20
@@ -154,40 +152,16 @@ local function CountsValueText(effState)
 	return allyText .. " vs " .. enemyText
 end
 
----A round that settled unknown is neither a win nor a loss, so a ? marks a tally that does
----not add up yet.
+---Both numbers come from the same accepted reading, so the record is never part known.
 local function RoundsValueText(effState)
-	local wins, losses, hasUnknown = 0, 0, false
+	local wins = effState.recordWins or 0
+	local losses = effState.recordLosses or 0
 
-	-- The scoreboard is the server's own record, so a reading from it is never marked.
-	if type(effState.scoreWins) == "number" and type(effState.scoreRounds) == "number" then
-		wins = effState.scoreWins
-		losses = effState.scoreRounds - effState.scoreWins
-	else
-		for i = 1, MAX_ROUNDS do
-			local result = effState.roundResults[i]
-
-			if result == "win" then
-				wins = wins + 1
-			elseif result == "loss" then
-				losses = losses + 1
-			elseif result == "unknown" then
-				hasUnknown = true
-			end
-		end
-	end
-
-	local text = ColorText(wins .. "W", Colors.ROUND_WON) .. " - " .. ColorText(losses .. "L", Colors.ROUND_LOST)
-
-	if hasUnknown then
-		text = text .. ColorText("?", Colors.COUNT_HIDDEN)
-	end
-
-	return text
+	return ColorText(wins .. "W", Colors.ROUND_WON) .. " - " .. ColorText(losses .. "L", Colors.ROUND_LOST)
 end
 
 local function RoundLineText(effState)
-	local fraction = (effState.roundIndex or 0) .. "/" .. MAX_ROUNDS
+	local fraction = (effState.roundIndex or 0) .. "/" .. (effState.roundTotal or MAX_ROUNDS)
 
 	return "Round " .. ColorText(fraction, Colors.ROUND_NUMBER)
 end

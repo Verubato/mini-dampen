@@ -73,6 +73,58 @@ fw.describe("MiniDampen - /minidampen debug", function()
 
 		fw.truthy(env.Context.Mock.State.Prints[1]:find("inScope=false", 1, true) ~= nil, "reports out of scope rather than erroring")
 	end)
+
+	fw.it("prints a widget's own text even though it carries a percent sign", function()
+		env.SoloShuffle = true
+		env.Enter()
+		env.SetRecordWidgets(3, 6, 1, { WinsText = "100% Ready" })
+
+		fw.no_error(function()
+			SlashCmdList.MINIDAMPEN("debug")
+		end, "a debug line that is not a safe format string")
+
+		local found = false
+
+		for _, line in ipairs(env.Context.Mock.State.Prints) do
+			if line:find("100% Ready", 1, true) then
+				found = true
+			end
+		end
+
+		fw.truthy(found, "the text reached chat unmangled")
+	end)
+end)
+
+fw.describe("MiniDampen - /minidampen log", function()
+	local env
+
+	fw.before_each(function()
+		env = Arena.Build()
+	end)
+
+	fw.it("starts off, so the capture costs a chat line to nobody who never asked for one", function()
+		fw.eq(_G.MiniDampenDB.Logging, false, "off out of the box")
+	end)
+
+	fw.it("turns the log on and back off", function()
+		SlashCmdList.MINIDAMPEN("log on")
+
+		fw.truthy(_G.MiniDampenDB.Logging, "on on request")
+
+		SlashCmdList.MINIDAMPEN("log off")
+
+		fw.falsy(_G.MiniDampenDB.Logging, "and back off again")
+	end)
+
+	fw.it("reports the setting on a bare log command", function()
+		local before = #env.Context.Mock.State.Prints
+
+		SlashCmdList.MINIDAMPEN("log")
+
+		local line = StripColor(env.Context.Mock.State.Prints[before + 1])
+
+		fw.truthy(line:find("Match logging is off.", 1, true) ~= nil, "says where the setting stands")
+	end)
 end)
 
 fw.describe("MiniDampen - /minidampen dampening", function()
@@ -236,9 +288,12 @@ fw.describe("MiniDampen - /minidampen probe", function()
 
 		local lines = PrintedSince(before)
 
-		fw.truthy(FindLine(lines, "topCenterWidgetSet=7") ~= nil, "reports the set id it queried")
+		fw.truthy(
+			FindLine(lines, "widgetSet GetTopCenterWidgetSetID=7") ~= nil,
+			"reports the set id it queried, and the getter that named it"
+		)
 
-		local widget = FindLine(lines, "widget id=42")
+		local widget = FindLine(lines, "widget GetTopCenterWidgetSetID id=42")
 
 		fw.not_nil(widget, "the widget was listed")
 		fw.truthy(widget:find("(IconAndText)", 1, true) ~= nil, "named its visualization type")
